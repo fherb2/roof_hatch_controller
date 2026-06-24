@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Dachluken</title>
+    <link rel="stylesheet" href="/static/bootstrap.min.css">
+    <style>
+        .btn-pos      { min-width: 4.5rem; }
+        .badge-moving { animation: pulse 1s ease-in-out infinite; }
+        @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:.4; } }
+    </style>
+</head>
+<body class="bg-light" x-data="app()">
+
+    <!-- Navbar -->
+    <nav class="navbar navbar-dark bg-dark sticky-top">
+        <div class="container-fluid">
+            <span class="navbar-brand mb-0 h5">&#127968; Dachluken</span>
+            <span class="text-light small" x-text="wifiText"></span>
+        </div>
+    </nav>
+
+    <div class="container-sm py-3">
+
+        <!-- Loading placeholder -->
+        <div x-show="hatches.length === 0" class="text-center text-muted py-5">
+            <div class="spinner-border mb-2" role="status">
+                <span class="visually-hidden">Laden...</span>
+            </div>
+            <div>Verbinde&hellip;</div>
+        </div>
+
+        <!-- Hatch cards -->
+        <template x-for="(h, i) in hatches" :key="i">
+            <div class="card mb-3 shadow-sm">
+
+                <!-- Card header: name + status badge -->
+                <div class="card-header d-flex justify-content-between
+                            align-items-center py-2">
+                    <span class="fw-semibold" x-text="h.name"></span>
+                    <!-- Moving indicator -->
+                    <span x-show="h.moving"
+                          class="badge bg-warning text-dark badge-moving">
+                        &#8635; BEWEGT
+                    </span>
+                    <!-- Position label when idle -->
+                    <span x-show="!h.moving && h.pos_idx !== null"
+                          class="badge bg-success"
+                          x-text="posLabel(h)">
+                    </span>
+                    <!-- Unknown position -->
+                    <span x-show="!h.moving && h.pos_idx === null"
+                          class="badge bg-danger">
+                        ???
+                    </span>
+                </div>
+
+                <!-- Card body: position buttons -->
+                <div class="card-body py-2">
+                    <div class="d-flex flex-wrap gap-2">
+                        <!--
+                            Alpine x-for with integer: j = 1 … h.num_positions
+                            We use (j-1) as 0-based position index.
+                        -->
+                        <template x-for="j in h.num_positions" :key="j">
+                            <button
+                                class="btn btn-pos"
+                                :class="h.pos_idx === (j - 1)
+                                    ? 'btn-primary'
+                                    : 'btn-outline-secondary'"
+                                :disabled="h.moving"
+                                @click="setPos(i, j - 1)"
+                                x-text="btnLabel(j - 1, h.num_positions)">
+                            </button>
+                        </template>
+                    </div>
+                </div>
+
+            </div>
+        </template>
+
+        <!-- Config button – only visible during unlock window or active session -->
+        <div x-show="showConfig" class="mt-1">
+            <a href="/config" class="btn btn-warning btn-sm">
+                &#9881; Konfiguration
+            </a>
+        </div>
+
+    </div><!-- /container -->
+
+    <script src="/static/bootstrap.bundle.min.js"></script>
+    <script>
+        function app() {
+            return {
+                hatches:    [],
+                showConfig: false,
+                wifiText:   '...',
+
+                init() {
+                    const connect = () => {
+                        const src = new EventSource('/sse');
+
+                        src.onmessage = (e) => {
+                            const d     = JSON.parse(e.data);
+                            this.hatches    = d.hatches;
+                            this.showConfig = d.session.active || d.session.unlock;
+                            this.wifiText   = d.wifi.connected
+                                            ? d.wifi.ip
+                                            : 'Kein WLAN';
+                        };
+
+                        src.onerror = () => {
+                            src.close();
+                            this.wifiText = 'Verbindung getrennt';
+                            setTimeout(connect, 3000);  // auto-reconnect
+                        };
+                    };
+                    connect();
+                },
+
+                /* Label shown in the card header badge */
+                posLabel(h) {
+                    if (h.pos_idx === 0)                    return 'ZU';
+                    if (h.pos_idx === h.num_positions - 1)  return 'AUF';
+                    return 'P' + (h.pos_idx + 1);
+                },
+
+                /* Label on each position button */
+                btnLabel(idx, total) {
+                    if (idx === 0)          return 'ZU';
+                    if (idx === total - 1)  return 'AUF';
+                    return 'P' + (idx + 1);
+                },
+
+                /* Send position command to the server */
+                async setPos(hatchIdx, posIdx) {
+                    await fetch('/api/hatch/' + hatchIdx + '/pos', {
+                        method:  'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body:    JSON.stringify({position_idx: posIdx}),
+                    });
+                },
+            };
+        }
+    </script>
+    <script src="/static/alpine.min.js"></script>
+</body>
+</html>

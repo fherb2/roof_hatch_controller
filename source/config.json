@@ -1,0 +1,66 @@
+{
+    "global": {
+        "brake_open_us": 1200,
+        "brake_close_us": 800,
+        "delay_after_power_on_ms": 300,
+        "delay_after_brake_open_ms": 400,
+        "delay_after_move_ms": 2200,
+        "delay_after_brake_close_ms": 500
+    },
+    "hatches": [
+        {
+            "name": "Luke 1",
+            "short_name": "Luke1",
+            "hatch_min_us": 600,
+            "hatch_max_us": 2400,
+            "step_us": 10,
+            "step_ms": 10,
+            "positions": [
+                {"hatch_us": 600},
+                {"hatch_us": 1500},
+                {"hatch_us": 2400}
+            ]
+        },
+        {
+            "name": "Luke 2",
+            "short_name": "Luke2",
+            "hatch_min_us": 600,
+            "hatch_max_us": 2400,
+            "step_us": 10,
+            "step_ms": 10,
+            "positions": [
+                {"hatch_us": 600},
+                {"hatch_us": 1500},
+                {"hatch_us": 2400}
+            ]
+        },
+        {
+            "name": "Luke 3",
+            "short_name": "Luke3",
+            "hatch_min_us": 600,
+            "hatch_max_us": 2400,
+            "step_us": 10,
+            "step_ms": 10,
+            "positions": [
+                {"hatch_us": 600},
+                {"hatch_us": 1500},
+                {"hatch_us": 2400}
+            ]
+        },
+        {
+            "name": "Luke 4",
+            "short_name": "Luke4",
+            "hatch_min_us": 600,
+            "hatch_max_us": 2400,
+            "step_us": 10,
+            "step_ms": 10,
+            "positions": [
+                {"hatch_us": 600},
+                {"hatch_us": 1500},
+                {"hatch_us": 2400}
+            ]
+        }
+    ]
+}
+```
+

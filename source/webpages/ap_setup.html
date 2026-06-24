@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Dachluken – WLAN einrichten</title>
+    <link rel="stylesheet" href="/static/bootstrap.min.css">
+</head>
+<body class="bg-light" x-data="apApp()">
+
+    <nav class="navbar navbar-dark bg-dark">
+        <div class="container-fluid">
+            <span class="navbar-brand mb-0 h6">&#128246; WLAN einrichten</span>
+        </div>
+    </nav>
+
+    <div class="container-sm py-3">
+
+        <!-- ============================================================
+             Scan results
+             ============================================================ -->
+        <div class="card mb-3 shadow-sm">
+            <div class="card-header d-flex justify-content-between align-items-center py-2">
+                <span class="small fw-semibold">Verf&#252;gbare Netzwerke</span>
+                <button class="btn btn-sm btn-outline-secondary"
+                        @click="scan()" :disabled="scanning">
+                    <span x-show="!scanning">&#8635; Suchen</span>
+                    <span x-show="scanning">&#8987;</span>
+                </button>
+            </div>
+            <div class="card-body p-0">
+
+                <!-- Scanning indicator -->
+                <div x-show="scanning" class="text-center text-muted py-3 small">
+                    Suche l&#228;uft&#8230;
+                    <div class="spinner-border spinner-border-sm ms-2" role="status"></div>
+                </div>
+
+                <!-- No results -->
+                <div x-show="!scanning && networks.length === 0"
+                     class="text-center text-muted py-3 small">
+                    Keine Netzwerke gefunden
+                </div>
+
+                <!-- Network list -->
+                <div class="list-group list-group-flush"
+                     x-show="!scanning && networks.length > 0">
+                    <template x-for="n in networks" :key="n.ssid">
+                        <button type="button"
+                                class="list-group-item list-group-item-action
+                                       d-flex justify-content-between
+                                       align-items-center py-2"
+                                :class="n.ssid === ssid ? 'active' : ''"
+                                @click="selectNet(n.ssid)">
+                            <span x-text="n.ssid"></span>
+                            <span class="small opacity-75 font-monospace"
+                                  x-text="signalBars(n.rssi)"
+                                  :title="n.rssi + ' dBm'"></span>
+                        </button>
+                    </template>
+                </div>
+
+            </div>
+        </div>
+
+        <!-- ============================================================
+             Credentials form
+             ============================================================ -->
+        <div class="card shadow-sm">
+            <div class="card-header py-2 small fw-semibold">Zugangsdaten</div>
+            <div class="card-body">
+
+                <!-- SSID -->
+                <div class="mb-3">
+                    <label class="form-label small">SSID (Netzwerkname)</label>
+                    <input type="text" class="form-control" x-model="ssid"
+                           placeholder="WLAN-Name eingeben oder oben ausw&#228;hlen">
+                </div>
+
+                <!-- Password with show/hide toggle -->
+                <div class="mb-3">
+                    <label class="form-label small">Passwort</label>
+                    <div class="input-group">
+                        <input :type="showPw ? 'text' : 'password'"
+                               class="form-control" x-model="password"
+                               placeholder="WLAN-Passwort">
+                        <button class="btn btn-outline-secondary" type="button"
+                                @click="showPw = !showPw"
+                                :title="showPw ? 'Verbergen' : 'Anzeigen'">
+                            <span x-text="showPw ? '&#128584;' : '&#128065;'"></span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Status / error message -->
+                <div x-show="msg" class="alert py-2 small mb-3"
+                     :class="msgOk ? 'alert-info' : 'alert-danger'"
+                     x-text="msg">
+                </div>
+
+                <!-- Submit -->
+                <div class="d-grid">
+                    <button class="btn btn-primary"
+                            @click="submit()"
+                            :disabled="!ssid.trim() || submitting">
+                        <span x-show="!submitting">
+                            Verbinden und neu starten
+                        </span>
+                        <span x-show="submitting">&#8987; Bitte warten&#8230;</span>
+                    </button>
+                </div>
+
+                <!-- Post-restart instructions -->
+                <div x-show="restarting" class="alert alert-success mt-3 small">
+                    <strong>Gespeichert.</strong> Das Ger&#228;t verbindet sich jetzt mit
+                    <em x-text="ssid"></em>.<br>
+                    Bitte wieder mit Ihrem Heimnetz verbinden und das Ger&#228;t dort
+                    &#252;ber die zugewiesene IP-Adresse aufrufen.<br>
+                    Die IP-Adresse wird nach dem Neustart kurz auf dem Display angezeigt.
+                </div>
+
+                <p x-show="!restarting" class="text-muted small text-center mt-2 mb-0">
+                    Das Ger&#228;t startet nach dem Speichern neu und verbindet sich
+                    mit dem gew&#228;hlten Netzwerk.
+                </p>
+
+            </div>
+        </div>
+
+    </div><!-- /container -->
+
+    <script src="/static/bootstrap.bundle.min.js"></script>
+    <script>
+    function apApp() {
+        return {
+            networks:   [],
+            scanning:   false,
+            ssid:       '',
+            password:   '',
+            showPw:     false,
+            submitting: false,
+            restarting: false,
+            msg:        '',
+            msgOk:      true,
+
+            /* Kick off a scan immediately on page load */
+            init() {
+                this.scan();
+            },
+
+            async scan() {
+                this.scanning = true;
+                this.networks = [];
+                try {
+                    const r = await fetch('/api/wifi/scan');
+                    const d = await r.json();
+                    this.networks = d.networks || [];
+                } catch (_) {
+                    this.networks = [];
+                } finally {
+                    this.scanning = false;
+                }
+            },
+
+            selectNet(name) {
+                this.ssid = name;
+            },
+
+            /* Convert rssi dBm to 4-bar ASCII indicator */
+            signalBars(rssi) {
+                if (rssi >= -50) return '\u258f\u258d\u258b\u2589 sehr gut';
+                if (rssi >= -60) return '\u258f\u258d\u258b\u2591 gut';
+                if (rssi >= -70) return '\u258f\u258d\u2591\u2591 mittel';
+                if (rssi >= -80) return '\u258f\u2591\u2591\u2591 schwach';
+                return             '\u2591\u2591\u2591\u2591 sehr schwach';
+            },
+
+            async submit() {
+                const s = this.ssid.trim();
+                if (!s) return;
+                this.submitting = true;
+                this.msg        = '';
+
+                try {
+                    const r = await fetch('/api/wifi', {
+                        method:  'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body:    JSON.stringify({ ssid: s, password: this.password }),
+                    });
+                    const d = await r.json();
+                    if (d.error) {
+                        this.msg        = 'Fehler: ' + d.error;
+                        this.msgOk      = false;
+                        this.submitting = false;
+                    }
+                    // If d.ok the device resets immediately → response may not arrive
+                } catch (_) {
+                    /* Network error here most likely means the device has already
+                       restarted and the AP is gone – which is the expected outcome. */
+                    this.restarting = true;
+                }
+            },
+        };
+    }
+    </script>
+    <script src="/static/alpine.min.js"></script>
+</body>
+</html>

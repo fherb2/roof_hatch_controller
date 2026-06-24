@@ -1,0 +1,415 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Dachluken – Konfiguration</title>
+    <link rel="stylesheet" href="/static/bootstrap.min.css">
+    <style>
+        .field-edited   { background-color: rgba(255, 193,  7, 0.25) !important; border-color: #ffc107 !important; }
+        .field-accepted { background-color: rgba( 13, 110,253, 0.12) !important; border-color: #0d6efd !important; }
+    </style>
+</head>
+<body class="bg-light" x-data="configApp()">
+
+    <!-- Navbar -->
+    <nav class="navbar navbar-dark bg-dark sticky-top">
+        <div class="container-fluid">
+            <a href="/" class="btn btn-sm btn-outline-light">&#8592; Zur&#252;ck</a>
+            <span class="navbar-brand mb-0 mx-2 h6">&#9881; Konfiguration</span>
+            <button class="btn btn-sm btn-warning" @click="save()" :disabled="saving">
+                <span x-show="!saving">&#128190; Speichern</span>
+                <span x-show="saving">&#8987;</span>
+            </button>
+        </div>
+    </nav>
+
+    <!-- Status message -->
+    <div x-show="saveMsg" class="alert alert-info mx-3 mt-3 mb-0 py-2 small"
+         x-text="saveMsg"></div>
+
+    <!-- Legend -->
+    <div class="alert alert-light border mx-3 mt-3 mb-0 py-2 small">
+        <strong>&#8635;</strong> Zur&#252;cksetzen &ensp;
+        <strong>&#10003;</strong> &#220;bernehmen &ensp;
+        <strong>&#9654;</strong> Anfahren<br>
+        <span class="px-2 me-1" style="background:rgba(255,193,7,.3)">&#9632;</span>editiert, nicht &#252;bernommen &ensp;
+        <span class="px-2 me-1" style="background:rgba(13,110,253,.15)">&#9632;</span>&#252;bernommen, nicht gespeichert
+    </div>
+
+    <!-- Main content: hidden until config loaded -->
+    <div class="container-sm py-3" x-show="loaded">
+        <div class="accordion" id="cfgAccordion">
+
+            <!-- ============================================================
+                 Global settings
+                 ============================================================ -->
+            <div class="accordion-item">
+                <h2 class="accordion-header">
+                    <button class="accordion-button" type="button"
+                            data-bs-toggle="collapse" data-bs-target="#panelGlobal">
+                        Globale Einstellungen
+                    </button>
+                </h2>
+                <div id="panelGlobal" class="accordion-collapse collapse show">
+                    <div class="accordion-body">
+
+                        <label class="form-label small fw-semibold">Bremse &#246;ffnen (&#181;s)</label>
+                        <div class="input-group input-group-sm mb-3">
+                            <button class="btn btn-outline-secondary" @click="resetF(g.brake_open_us)">&#8635;</button>
+                            <input type="number" class="form-control" :class="bgClass(g.brake_open_us)"
+                                   x-model="g.brake_open_us.draft" min="500" max="2500">
+                            <button class="btn btn-outline-success"
+                                    @click="acceptNum(g.brake_open_us, 500, 2500)">&#10003;</button>
+                        </div>
+
+                        <label class="form-label small fw-semibold">Bremse schlie&#223;en (&#181;s)</label>
+                        <div class="input-group input-group-sm mb-3">
+                            <button class="btn btn-outline-secondary" @click="resetF(g.brake_close_us)">&#8635;</button>
+                            <input type="number" class="form-control" :class="bgClass(g.brake_close_us)"
+                                   x-model="g.brake_close_us.draft" min="500" max="2500">
+                            <button class="btn btn-outline-success"
+                                    @click="acceptNum(g.brake_close_us, 500, 2500)">&#10003;</button>
+                        </div>
+
+                        <!-- Global delay fields via metadata array -->
+                        <template x-for="fd in gDelayFields" :key="fd.key">
+                            <div>
+                                <label class="form-label small fw-semibold" x-text="fd.label"></label>
+                                <div class="input-group input-group-sm mb-3">
+                                    <button class="btn btn-outline-secondary" @click="resetF(g[fd.key])">&#8635;</button>
+                                    <input type="number" class="form-control" :class="bgClass(g[fd.key])"
+                                           x-model="g[fd.key].draft" min="0" max="10000">
+                                    <button class="btn btn-outline-success"
+                                            @click="acceptNum(g[fd.key], 0, 10000)">&#10003;</button>
+                                </div>
+                            </div>
+                        </template>
+
+                    </div>
+                </div>
+            </div><!-- /global -->
+
+            <!-- ============================================================
+                 Hatch accordion items (one per hatch, generated by x-for)
+                 ============================================================ -->
+            <template x-for="(h, hi) in hatches" :key="hi">
+                <div class="accordion-item">
+                    <h2 class="accordion-header">
+                        <button class="accordion-button collapsed" type="button"
+                                data-bs-toggle="collapse"
+                                :data-bs-target="'#panelH' + hi">
+                            <span x-text="h.name.val"></span>
+                        </button>
+                    </h2>
+                    <div :id="'panelH' + hi" class="accordion-collapse collapse">
+                        <div class="accordion-body">
+
+                            <!-- Name -->
+                            <label class="form-label small fw-semibold">Name</label>
+                            <div class="input-group input-group-sm mb-3">
+                                <button class="btn btn-outline-secondary" @click="resetF(h.name)">&#8635;</button>
+                                <input type="text" class="form-control" :class="bgClass(h.name)"
+                                       x-model="h.name.draft">
+                                <button class="btn btn-outline-success"
+                                        @click="acceptStr(h.name, 32)">&#10003;</button>
+                            </div>
+
+                            <!-- Short name -->
+                            <label class="form-label small fw-semibold">Kurzname (max.&#160;6&#160;Zeichen, OLED)</label>
+                            <div class="input-group input-group-sm mb-3">
+                                <button class="btn btn-outline-secondary" @click="resetF(h.short_name)">&#8635;</button>
+                                <input type="text" class="form-control" :class="bgClass(h.short_name)"
+                                       x-model="h.short_name.draft" maxlength="6">
+                                <button class="btn btn-outline-success"
+                                        @click="acceptStr(h.short_name, 6)">&#10003;</button>
+                            </div>
+
+                            <!-- Hardstops (side by side) -->
+                            <div class="row g-2 mb-3">
+                                <div class="col-6">
+                                    <label class="form-label small fw-semibold">Min-Hardstop (&#181;s)</label>
+                                    <div class="input-group input-group-sm">
+                                        <button class="btn btn-outline-secondary" @click="resetF(h.min)">&#8635;</button>
+                                        <input type="number" class="form-control" :class="bgClass(h.min)"
+                                               x-model="h.min.draft" min="500" max="2500">
+                                        <button class="btn btn-outline-success"
+                                                @click="acceptNum(h.min, 500, h.max.val - 1)">&#10003;</button>
+                                    </div>
+                                </div>
+                                <div class="col-6">
+                                    <label class="form-label small fw-semibold">Max-Hardstop (&#181;s)</label>
+                                    <div class="input-group input-group-sm">
+                                        <button class="btn btn-outline-secondary" @click="resetF(h.max)">&#8635;</button>
+                                        <input type="number" class="form-control" :class="bgClass(h.max)"
+                                               x-model="h.max.draft" min="500" max="2500">
+                                        <button class="btn btn-outline-success"
+                                                @click="acceptNum(h.max, h.min.val + 1, 2500)">&#10003;</button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Step size / interval (side by side) -->
+                            <div class="row g-2 mb-3">
+                                <div class="col-6">
+                                    <label class="form-label small fw-semibold">Schrittgr&#246;&#223;e (&#181;s)</label>
+                                    <div class="input-group input-group-sm">
+                                        <button class="btn btn-outline-secondary" @click="resetF(h.step_us)">&#8635;</button>
+                                        <input type="number" class="form-control" :class="bgClass(h.step_us)"
+                                               x-model="h.step_us.draft" min="1" max="500">
+                                        <button class="btn btn-outline-success"
+                                                @click="acceptNum(h.step_us, 1, 500)">&#10003;</button>
+                                    </div>
+                                </div>
+                                <div class="col-6">
+                                    <label class="form-label small fw-semibold">Intervall (ms)</label>
+                                    <div class="input-group input-group-sm">
+                                        <button class="btn btn-outline-secondary" @click="resetF(h.step_ms)">&#8635;</button>
+                                        <input type="number" class="form-control" :class="bgClass(h.step_ms)"
+                                               x-model="h.step_ms.draft" min="1" max="1000">
+                                        <button class="btn btn-outline-success"
+                                                @click="acceptNum(h.step_ms, 1, 1000)">&#10003;</button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Positions list -->
+                            <div class="fw-semibold small mb-2">Rastpositionen</div>
+
+                            <template x-for="(pos, pi) in h.positions" :key="pi">
+                                <div>
+                                    <label class="form-label small"
+                                           x-text="posLabel(pi, h.positions.length) + ' (&#181;s)'">
+                                    </label>
+                                    <div class="input-group input-group-sm mb-2">
+                                        <button class="btn btn-outline-secondary"
+                                                @click="resetF(pos)">&#8635;</button>
+                                        <input type="number" class="form-control" :class="bgClass(pos)"
+                                               x-model="pos.draft"
+                                               :min="h.min.val" :max="h.max.val">
+                                        <button class="btn btn-outline-success"
+                                                @click="acceptNum(pos, h.min.val, h.max.val)"
+                                                title="&#220;bernehmen">&#10003;</button>
+                                        <button class="btn btn-outline-info"
+                                                :disabled="pos.draft !== '' + pos.val"
+                                                @click="testMove(hi, pos.val)"
+                                                title="Anfahren">&#9654;</button>
+                                    </div>
+                                </div>
+                            </template>
+
+                            <!-- Add / remove position -->
+                            <div class="d-flex gap-2 mt-1">
+                                <button class="btn btn-sm btn-outline-secondary"
+                                        @click="addPos(hi)">+ Position</button>
+                                <button class="btn btn-sm btn-outline-secondary"
+                                        :disabled="h.positions.length <= 2"
+                                        @click="removePos(hi)">&#8722; Position</button>
+                            </div>
+
+                        </div>
+                    </div>
+                </div>
+            </template>
+
+        </div><!-- /accordion -->
+
+        <!-- Bottom save -->
+        <div class="d-grid mt-4">
+            <button class="btn btn-warning" @click="save()" :disabled="saving">
+                <span x-show="!saving">&#128190; Speichern und neu starten</span>
+                <span x-show="saving" x-text="saveMsg"></span>
+            </button>
+        </div>
+        <p class="text-center text-muted small mt-2">
+            Nicht gespeicherte &#196;nderungen gehen beim Schlie&#223;en der Seite verloren.
+        </p>
+
+    </div><!-- /container -->
+
+    <!-- Loading indicator -->
+    <div x-show="!loaded" class="text-center text-muted py-5">
+        <div class="spinner-border mb-2" role="status"></div>
+        <div>Konfiguration wird geladen&hellip;</div>
+    </div>
+
+    <script src="/static/bootstrap.bundle.min.js"></script>
+    <script>
+    function configApp() {
+        return {
+            loaded:  false,
+            saving:  false,
+            saveMsg: '',
+            g:       {},
+            hatches: [],
+
+            // Metadata for the four global delay fields (avoids repetition in HTML)
+            gDelayFields: [
+                { key: 'delay_after_power_on_ms',    label: 'Verz\u00f6gerung nach Relais-Ein (ms)' },
+                { key: 'delay_after_brake_open_ms',  label: 'Verz\u00f6gerung nach Bremse auf (ms)' },
+                { key: 'delay_after_move_ms',        label: 'Verz\u00f6gerung nach Fahrt (ms)' },
+                { key: 'delay_after_brake_close_ms', label: 'Verz\u00f6gerung nach Bremse zu (ms)' },
+            ],
+
+            /* ----------------------------------------------------------------
+               Field factory: wraps a raw value in {orig, val, draft}
+            ---------------------------------------------------------------- */
+            fld(orig) {
+                return { orig, val: orig, draft: '' + orig };
+            },
+
+            /* ----------------------------------------------------------------
+               CSS class for input field based on its state
+            ---------------------------------------------------------------- */
+            bgClass(f) {
+                if (!f) return '';
+                if (f.draft !== '' + f.val) return 'field-edited';
+                if (f.val   !== f.orig)     return 'field-accepted';
+                return '';
+            },
+
+            /* ----------------------------------------------------------------
+               Accept / reset helpers
+            ---------------------------------------------------------------- */
+            acceptNum(f, min, max) {
+                const v = Number(f.draft);
+                if (!Number.isFinite(v) || v < min || v > max) return;
+                f.val = v;
+            },
+
+            acceptStr(f, maxLen) {
+                const v = f.draft.trim();
+                if (!v || v.length > maxLen) return;
+                f.val   = v;
+                f.draft = v;   // normalise whitespace in the box
+            },
+
+            resetF(f) {
+                f.val   = f.orig;
+                f.draft = '' + f.orig;
+            },
+
+            /* ----------------------------------------------------------------
+               Position label: ZU / P2 … / AUF
+            ---------------------------------------------------------------- */
+            posLabel(idx, total) {
+                if (idx === 0)          return 'ZU';
+                if (idx === total - 1)  return 'AUF';
+                return 'P' + (idx + 1);
+            },
+
+            /* ----------------------------------------------------------------
+               Dynamic position management
+            ---------------------------------------------------------------- */
+            addPos(hi) {
+                const h    = this.hatches[hi];
+                const last = h.positions.length
+                    ? h.positions[h.positions.length - 1].val
+                    : h.min.val;
+                h.positions.push(this.fld(last));
+            },
+
+            removePos(hi) {
+                const h = this.hatches[hi];
+                if (h.positions.length > 2) h.positions.pop();
+            },
+
+            /* ----------------------------------------------------------------
+               Test move: send accepted µs value to task_control via API
+            ---------------------------------------------------------------- */
+            testMove(hi, hatch_us) {
+                fetch('/api/hatch/' + hi + '/test', {
+                    method:  'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body:    JSON.stringify({ hatch_us }),
+                });
+            },
+
+            /* ----------------------------------------------------------------
+               Collect accepted values into a config dict for POST
+            ---------------------------------------------------------------- */
+            buildConfig() {
+                return {
+                    global: {
+                        brake_open_us:              this.g.brake_open_us.val,
+                        brake_close_us:             this.g.brake_close_us.val,
+                        delay_after_power_on_ms:    this.g.delay_after_power_on_ms.val,
+                        delay_after_brake_open_ms:  this.g.delay_after_brake_open_ms.val,
+                        delay_after_move_ms:        this.g.delay_after_move_ms.val,
+                        delay_after_brake_close_ms: this.g.delay_after_brake_close_ms.val,
+                    },
+                    hatches: this.hatches.map(h => ({
+                        name:         h.name.val,
+                        short_name:   h.short_name.val,
+                        hatch_min_us: h.min.val,
+                        hatch_max_us: h.max.val,
+                        step_us:      h.step_us.val,
+                        step_ms:      h.step_ms.val,
+                        positions:    h.positions.map(p => ({ hatch_us: p.val })),
+                    })),
+                };
+            },
+
+            /* ----------------------------------------------------------------
+               Save: POST config, then device restarts
+            ---------------------------------------------------------------- */
+            async save() {
+                this.saving  = true;
+                this.saveMsg = 'Wird gespeichert\u2026';
+                try {
+                    const r = await fetch('/api/config', {
+                        method:  'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body:    JSON.stringify(this.buildConfig()),
+                    });
+                    const d = await r.json();
+                    if (d.error) {
+                        this.saveMsg = 'Fehler: ' + d.error;
+                        this.saving  = false;
+                    } else {
+                        this.saveMsg = 'Gespeichert. Ger\u00e4t startet neu\u2026';
+                    }
+                } catch (_) {
+                    // Network error: device likely restarted – expected
+                    this.saveMsg = 'Ger\u00e4t startet neu. Bitte kurz warten\u2026';
+                    setTimeout(() => { window.location.href = '/'; }, 5000);
+                }
+            },
+
+            /* ----------------------------------------------------------------
+               Initialise: load config from server and build field wrappers
+            ---------------------------------------------------------------- */
+            init() {
+                fetch('/api/config')
+                    .then(r => r.json())
+                    .then(cfg => {
+                        const G  = cfg.global;
+                        this.g = {
+                            brake_open_us:             this.fld(G.brake_open_us),
+                            brake_close_us:            this.fld(G.brake_close_us),
+                            delay_after_power_on_ms:   this.fld(G.delay_after_power_on_ms),
+                            delay_after_brake_open_ms: this.fld(G.delay_after_brake_open_ms),
+                            delay_after_move_ms:       this.fld(G.delay_after_move_ms),
+                            delay_after_brake_close_ms:this.fld(G.delay_after_brake_close_ms),
+                        };
+                        this.hatches = cfg.hatches.map(h => ({
+                            name:       this.fld(h.name),
+                            short_name: this.fld(h.short_name),
+                            min:        this.fld(h.hatch_min_us),
+                            max:        this.fld(h.hatch_max_us),
+                            step_us:    this.fld(h.step_us),
+                            step_ms:    this.fld(h.step_ms),
+                            positions:  h.positions.map(p => this.fld(p.hatch_us)),
+                        }));
+                        this.loaded = true;
+                    })
+                    .catch(() => {
+                        this.saveMsg = 'Konfiguration konnte nicht geladen werden.';
+                    });
+            },
+        };
+    }
+    </script>
+    <script src="/static/alpine.min.js"></script>
+</body>
+</html>

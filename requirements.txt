@@ -1,0 +1,8 @@
+# Der Dependency-Check ist bewusst einfach gehalten – er prüft ob 
+# paketname.py oder paketname/ in lib/ existiert. Für die meisten
+# einfachen MicroPython-Pakete reicht das. Bei Paketen mit anderem
+# Dateinamen als dem Paketnamen müsste man das manuell anpassen
+# oder einen Kommentar in der requirements.txt ergänzen.
+
+ssd1306
+github:miguelgrinberg/microdot
