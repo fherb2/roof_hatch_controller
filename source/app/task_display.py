@@ -11,6 +11,17 @@
 import uasyncio
 import network
 from app import session
+from app.hw_config import FAILSAFE_US
+
+# QR code support – uQR must be installed in /lib
+try:
+    from uQR import QRCode as _QRCode
+    _QR_AVAILABLE = True
+except ImportError:
+    _QR_AVAILABLE = False
+
+_qr_cache_url    = None  # URL for which the matrix was generated
+_qr_cache_matrix = None  # cached matrix to avoid regenerating on every refresh
 
 _REFRESH_MS = 500  # display refresh interval in milliseconds
 
@@ -26,16 +37,24 @@ def _find_pos_idx(hatch_us, positions):
 def _status_text(idx, state, targets, config):
     """Return a status string (max 9 chars) for hatch idx.
 
-    "BEWEGT"  – target differs from actual (hatch is moving)
+    "BEWEGT"  – target differs from actual (moving or fail-safe recovery
+                in progress)
+    "?ZU?"    – actual and target are both FAILSAFE_US: hatch fell closed
+                by gravity after a fail-safe sequence, position unverified
+                and unlocked
     "ZU"      – at first position (index 0, most closed)
     "AUF"     – at last position (most open)
-    "P{n}"    – at intermediate position n (1-based)
-    "???"     – actual position not found in positions list
+    "P{n}"    – at intermediate position n (1-based, P2 … P(n-1))
+    "???"     – actual position not found in positions list (should not
+                occur in normal operation after fail-safe handling)
     """
     if targets[idx]["hatch_us"] != state["hatches"][idx]["hatch_us"]:
         return "BEWEGT"
 
     hatch_us  = state["hatches"][idx]["hatch_us"]
+    if hatch_us == FAILSAFE_US:
+        return "?ZU?"
+
     positions = config["hatches"][idx]["positions"]
     pos_idx   = _find_pos_idx(hatch_us, positions)
 
@@ -59,6 +78,53 @@ def _wifi_line():
         return ("AP:" + ap.ifconfig()[0])[:16] # AP mode IP
 
     return "Kein WLAN"
+
+
+def _render_qr(display):
+    """Render the current Wi-Fi IP as a QR code on the display.
+
+    White background, black QR modules. Matrix is cached until the URL
+    changes to avoid regenerating on every 500 ms refresh cycle.
+    """
+    global _qr_cache_url, _qr_cache_matrix
+
+    if not _QR_AVAILABLE:
+        display.fill(0)
+        display.text("uQR not found", 0, 28)
+        display.show()
+        return
+
+    # Determine current URL
+    sta = network.WLAN(network.STA_IF)
+    if sta.isconnected():
+        url = "http://" + sta.ifconfig()[0]
+    else:
+        ap = network.WLAN(network.AP_IF)
+        url = "http://" + (ap.ifconfig()[0] if ap.active() else "0.0.0.0")
+
+    # Regenerate matrix only when URL changes
+    if url != _qr_cache_url:
+        qr = _QRCode()
+        qr.add_data(url)
+        _qr_cache_matrix = qr.get_matrix()
+        _qr_cache_url    = url
+
+    matrix = _qr_cache_matrix
+    size   = len(matrix)
+    QUIET  = 4  # quiet zone in pixels (required for scanners)
+
+    offset_x = (128 - size - 2 * QUIET) // 2
+    offset_y = (64  - size - 2 * QUIET) // 2
+
+    display.fill(1)  # white background (quiet zone + white modules)
+    for my in range(size):
+        for mx in range(size):
+            if matrix[my][mx]:  # True = black module
+                x = offset_x + QUIET + mx
+                y = offset_y + QUIET + my
+                if 0 <= x < 128 and 0 <= y < 64:
+                    display.pixel(x, y, 0)
+    display.show()
 
 
 def _refresh(display, config, state, targets):
@@ -96,7 +162,10 @@ async def task_display(hw, config, state, targets):
     """
     while True:
         try:
-            _refresh(hw.display, config, state, targets)
+            if session.is_qr_active():
+                _render_qr(hw.display)
+            else:
+                _refresh(hw.display, config, state, targets)
         except Exception as e:
             # Display errors must not crash the event loop
             print(f"Display error: {e}")

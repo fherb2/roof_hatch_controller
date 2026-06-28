@@ -38,16 +38,22 @@ class HardwareBundle:
 
 
 def _check_i2c_device(i2c, address, name):
-    """Verify that a device responds on the I2C bus.
-
-    Raises HardwareInitError if the device is not found.
-    """
-    devices = i2c.scan()
-    if address not in devices:
-        raise HardwareInitError(
-            f"{name} not found on I2C bus (expected 0x{address:02X}, "
-            f"found: {[hex(d) for d in devices]})"
-        )
+    if address > 0x77:
+        # Addresses 0x78-0x7F are outside the range scanned by i2c.scan()
+        # (reserved per I2C spec). Probe directly with a write attempt.
+        try:
+            i2c.writeto(address, b'')
+        except OSError:
+            raise HardwareInitError(
+                f"{name} not found on I2C bus (expected 0x{address:02X})"
+            )
+    else:
+        devices = i2c.scan()
+        if address not in devices:
+            raise HardwareInitError(
+                f"{name} not found on I2C bus (expected 0x{address:02X}, "
+                f"found: {[hex(d) for d in devices]})"
+            )
 
 def init_hw_failsafe():
     """Minimal hardware init for fail-safe sequence.

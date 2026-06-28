@@ -1,61 +1,108 @@
-# task_control.py - Async task: hatch control loop
-#
-# Continuously compares target and actual positions for each hatch.
-# If a difference is found, executes the full movement sequence for
-# that hatch before proceeding to the next one.
-#
-# Movement sequence per hatch:
-#   1. Output last known servo positions to PCA9685
-#   2. Relay on  →  servos powered
-#   3. Wait delay_after_power_on_ms
-#   4. Brake servo → brake_open_us
-#   5. Wait delay_after_brake_open_ms
-#   6. Hatch servo → target position (stepped, respects hardstops)
-#   7. Wait delay_after_move_ms
-#   8. Brake servo → brake_close_us
-#   9. Wait delay_after_brake_close_ms
-#  10. Relay off  →  servos unpowered
-#  11. Update state, persist to flash
+"""
+task_control.py – Async task: hatch control loop.
+
+Continuously compares the target position (set by the web interface or
+the button task) with the last known actual position for each hatch.
+When a mismatch is found, the full movement sequence is executed for
+that hatch before checking the next one.  All four hatches are
+processed sequentially in index order within a single loop pass.
+
+Movement sequence executed by _move_hatch:
+step_mark_failsafe:     Set hatch_us to FAILSAFE_US and persist so
+                          that a power loss mid-move leaves a detectable
+                          sentinel in state.json rather than a stale
+                          position.
+  step_preset_servos:     Output start positions to PCA9685 before
+                          relay-on.  Hatch servo: last known actual
+                          position, or positions[0] if actual was
+                          FAILSAFE_US (hatch assumed near closed by
+                          gravity).  Brake servo: always brake_open_us
+                          so it immediately begins travelling when the
+                          relay closes.
+  step_relay_on:          Relay on → servos powered; brake immediately
+                          starts moving towards the open position.
+  step_wiggle:            Alternate hatch servo ± _WIGGLE_US around the
+                          preset position for _WIGGLE_CYCLES full +/-
+                          cycles at ~50 Hz (2 × 20 ms per cycle).
+                          Breaks power-on centre-seeking on some digital
+                          servos.  Disabled when _WIGGLE_CYCLES = 0.
+  step_open_brake:        Wait delay_after_brake_change_cmd_ms for the
+                          brake to complete its travel to open.
+  step_move_hatch:        Hatch servo → target position, stepped by
+                          step_us every step_ms, clamped to
+                          [hatch_min_us, hatch_max_us].
+  step_wait_hatch_settle: Wait delay_after_move_ms for the hatch to
+                          reach its final position before the brake
+                          closes.
+  step_close_brake:       Brake servo → brake_close_us, then wait
+                          delay_after_brake_change_cmd_ms for the brake
+                          to complete its travel to closed.
+  step_relay_off:         Relay off → servos unpowered.  Always runs
+                          in the finally block regardless of outcome.
+  step_update_state:      Update hatch_us, brake_us and target_us in
+                          state and persist to flash.
+
+The relay is switched off unconditionally in a finally block so that an
+unexpected exception can never leave the servos powered indefinitely.
+The hardware WDT (task_watchdog) acts as the last safety net for cases
+where the event loop itself stops responding.
+"""
 
 import uasyncio
-import time
-from app.hw_config import PCA9685_CH, RELAY_CH
+from app.hw_config import PCA9685_CH, RELAY_CH, FAILSAFE_US
 from app.state import save_state
 
-
-class _WatchdogError(Exception):
-    """Raised when a relay has been on longer than SERVO_WATCHDOG_MS."""
-    pass
-
-
-def _check_watchdog(relay_on_ticks, hatch_idx):
-    """Raise _WatchdogError if relay has been on too long.
-
-    Args:
-        relay_on_ticks: value of time.ticks_ms() when relay was switched on
-        hatch_idx:      hatch index for error message
-    """
-    elapsed = time.ticks_diff(time.ticks_ms(), relay_on_ticks)
-    if elapsed > SERVO_WATCHDOG_MS:
-        raise _WatchdogError(
-            f"hatch {hatch_idx}: relay on for {elapsed} ms "
-            f"(limit {SERVO_WATCHDOG_MS} ms)"
-        )
+# Wiggle parameters: after relay-on, the hatch servo alternates between
+# preset_us ± _WIGGLE_US for _WIGGLE_CYCLES full oscillations at ~50 Hz
+# (each cycle is one +/- pair = 2 × 20 ms).  Intended to interrupt the
+# power-on centre-seeking routine of some digital servos.
+# Set _WIGGLE_CYCLES = 0 to disable entirely.
+_WIGGLE_US       = 10   # amplitude in µs
+_WIGGLE_CYCLES   = 5    # full +/- cycles; 0 = disabled
+_PRESET_DELAY_MS = 250  # wait after relay-on before first PWM signal;
+                         # gives servo controller time to boot without
+                         # seeing a valid signal → may prevent power-on
+                         # centre-seeking jerk; 0 = disabled
 
 
 async def _move_hatch(idx, hw, config, state, targets):
     """Execute the full movement sequence for one hatch.
 
-    Clamps the target position to the configured hardstop range before
-    moving. On watchdog timeout, cuts the relay immediately and resets
-    the target to the last known actual position to prevent retry loops.
+    Drives the PCA9685 and relay through the named steps described in
+    the module docstring.  Timing and position limits come from config;
+    the last known servo positions come from state.
+
+    The target position is clamped to [hatch_min_us, hatch_max_us]
+    before the move starts and written back into targets.
+
+    In step_mark_failsafe, hatch_us is set to FAILSAFE_US and persisted
+    so that a power loss mid-move leaves a recoverable sentinel in
+    state.json instead of a stale position.
+
+    In step_preset_servos, the brake servo is always preset to
+    brake_open_us so it begins travelling the moment the relay closes –
+    no separate brake command is needed after relay-on.  The hatch servo
+    is preset to the last known actual position, or positions[0] if
+    actual was FAILSAFE_US.
+
+    In step_wiggle, the hatch servo alternates ± _WIGGLE_US around the
+    preset position for _WIGGLE_CYCLES full cycles at ~50 Hz to
+    interrupt the power-on centre-seeking routine of digital servos.
+    Set _WIGGLE_CYCLES = 0 to disable.
+
+    save_state() is called in step_mark_failsafe (FAILSAFE_US) and
+    again in step_update_state on success.  On any exception the relay
+    is switched off in step_relay_off (finally block) and the exception
+    propagates to task_control, which logs it and continues.
 
     Args:
-        idx:     hatch index (0–3)
-        hw:      HardwareBundle
-        config:  config dict from load_config()
-        state:   state dict from load_state() – mutated and persisted on success
-        targets: RAM-only target dict – mutated on watchdog error
+        idx:     hatch index (0–3).
+        hw:      HardwareBundle.
+        config:  config dict from load_config().
+        state:   state dict from load_state() – mutated and persisted on
+                 success.
+        targets: RAM-only target dict – target value may be clamped in
+                 place before the move.
     """
     g = config["global"]
     h = config["hatches"][idx]
@@ -69,26 +116,51 @@ async def _move_hatch(idx, hw, config, state, targets):
                     min(h["hatch_max_us"], targets[idx]["hatch_us"]))
     targets[idx]["hatch_us"] = target_us  # write back clamped value
 
-    # -- Step 1: output last known positions before powering servos -------
-    hw.pwm.set_us(hatch_ch, s["hatch_us"])
-    hw.pwm.set_us(brake_ch, s["brake_us"])
+    # Capture actual position before overwriting it with FAILSAFE_US
+    actual_us = s["hatch_us"]
 
-    # -- Step 2: relay on, start watchdog ---------------------------------
-    relay_on_ticks = time.ticks_ms()
+    # -- Step 0: mark actual as unknown and persist -----------------------
+    # Any power loss after this point leaves FAILSAFE_US in state.json,
+    # signalling on next boot that the physical position is unknown.
+    s["hatch_us"] = FAILSAFE_US
+    save_state(state)
+
+    # -- step_preset_servos: brake to brake_open_us; hatch to 0 (no ------
+    #    signal) so the servo controller does not see a valid pulse
+    #    during its power-on boot sequence
+    preset_us = (h["positions"][0]["hatch_us"]
+                 if actual_us == FAILSAFE_US else actual_us)
+    hw.pwm.set_us(hatch_ch, 0)
+    hw.pwm.set_us(brake_ch, g["brake_open_us"])
+
+    # -- step_relay_on: servos powered; brake immediately starts ----------
+    #    moving towards the open position
     hw.relay.on(relay_ch)
 
     try:
-        # -- Step 3: wait after power-on ----------------------------------
-        await uasyncio.sleep_ms(g["delay_after_power_on_ms"])
-        _check_watchdog(relay_on_ticks, idx)
+        # -- step_preset_delay: wait for servo controller to boot ---------
+        #    before presenting a valid PWM signal
+        if _PRESET_DELAY_MS > 0:
+            await uasyncio.sleep_ms(_PRESET_DELAY_MS)
 
-        # -- Step 4+5: open brake, wait -----------------------------------
-        hw.pwm.set_us(brake_ch, g["brake_open_us"])
-        await uasyncio.sleep_ms(g["delay_after_brake_open_ms"])
-        _check_watchdog(relay_on_ticks, idx)
+        # -- step_wiggle: set first pulse and immediately alternate -------
+        #    ± _WIGGLE_US to break any residual centre-seeking
+        _period_ms = 20  # 50 Hz base period
+        hw.pwm.set_us(hatch_ch, preset_us)
+        for _ in range(_WIGGLE_CYCLES):
+            hw.pwm.set_us(hatch_ch, preset_us + _WIGGLE_US)
+            await uasyncio.sleep_ms(_period_ms)
+            hw.pwm.set_us(hatch_ch, preset_us - _WIGGLE_US)
+            await uasyncio.sleep_ms(_period_ms)
+        if _WIGGLE_CYCLES > 0:
+            hw.pwm.set_us(hatch_ch, preset_us)
 
-        # -- Step 6: move hatch servo step by step ------------------------
-        current_us = s["hatch_us"]
+        # -- step_open_brake: wait for brake to complete travel to open ---
+        await uasyncio.sleep_ms(g["delay_after_brake_change_cmd_ms"])
+
+        # -- step_move_hatch: ramp hatch servo to target position ---------
+        current_us = (h["positions"][0]["hatch_us"]
+                      if actual_us == FAILSAFE_US else actual_us)
         step       = h["step_us"]
         while current_us != target_us:
             if current_us < target_us:
@@ -97,44 +169,51 @@ async def _move_hatch(idx, hw, config, state, targets):
                 current_us = max(current_us - step, target_us)
             hw.pwm.set_us(hatch_ch, current_us)
             await uasyncio.sleep_ms(h["step_ms"])
-            _check_watchdog(relay_on_ticks, idx)
 
-        # -- Step 7: wait after move --------------------------------------
+        # -- step_wait_hatch_settle: wait for hatch to reach its final ----
+        #    position before commanding the brake to close
         await uasyncio.sleep_ms(g["delay_after_move_ms"])
-        _check_watchdog(relay_on_ticks, idx)
 
-        # -- Step 8+9: close brake, wait ----------------------------------
+        # -- step_close_brake: command brake closed, wait for travel ------
         hw.pwm.set_us(brake_ch, g["brake_close_us"])
-        await uasyncio.sleep_ms(g["delay_after_brake_close_ms"])
-        # No watchdog check here: relay goes off in finally immediately after
+        await uasyncio.sleep_ms(g["delay_after_brake_change_cmd_ms"])
 
-        # -- Step 11: update and persist state ----------------------------
+        # -- step_update_state: confirm reached position and persist ------
         s["hatch_us"] = target_us
         s["brake_us"] = g["brake_close_us"]
+        s["target_us"] = target_us
         save_state(state)
 
-    except _WatchdogError as e:
-        # Position unknown after timeout – reset target to last known
-        # actual position so the loop does not retry endlessly.
-        print(f"WATCHDOG ERROR: {e}")
-        targets[idx]["hatch_us"] = s["hatch_us"]
-
     finally:
-        # Always cut servo power, regardless of success or error
+        # -- step_relay_off: always cut servo power -----------------------
         hw.relay.off(relay_ch)
 
 
 async def task_control(hw, config, state, targets):
-    """Async control loop: iterate all hatches, move where needed.
+    """Async control loop: move hatches to their target positions.
 
-    Runs forever. Yields between loop passes and between every step
-    during movement so other tasks remain responsive.
+    Runs forever as part of uasyncio.gather().  On every pass it checks
+    all hatches in order and starts a full movement sequence for each
+    one whose target differs from its last known actual position.
+
+    Exceptions from individual moves are caught here, logged to the
+    serial console and skipped, so that a transient error on one hatch
+    does not prevent the others from being serviced.  By the time the
+    exception reaches this level the relay is already off (see the
+    finally block in _move_hatch).
+
+    Truly unexpected errors that propagate past this handler will bring
+    down the event loop, allowing the hardware WDT to trigger a reset
+    and run the fail-safe sequence – this is intentional design, not an
+    oversight.
 
     Args:
-        hw:      HardwareBundle
-        config:  config dict from load_config()
-        state:   state dict (mutated and persisted after each move)
-        targets: RAM-only setpoint dict (mutated by web/button tasks)
+        hw:      HardwareBundle.
+        config:  config dict from load_config().
+        state:   state dict (mutated and persisted after each successful
+                 move).
+        targets: RAM-only setpoint dict (mutated by web and button
+                 tasks).
     """
     num_hatches = len(targets)
 
@@ -142,8 +221,14 @@ async def task_control(hw, config, state, targets):
         moved = False
         for i in range(num_hatches):
             if targets[i]["hatch_us"] != state["hatches"][i]["hatch_us"]:
-                await _move_hatch(i, hw, config, state, targets)
+                try:
+                    await _move_hatch(i, hw, config, state, targets)
+                except Exception as e:
+                    print(f"task_control: move hatch {i} failed: {e}")
+                    # relay is already off via _move_hatch finally block;
+                    # leave state unchanged and continue with next hatch
                 moved = True
 
-        # Yield briefly; shorter when idle to stay responsive to new targets
-        await uasyncio.sleep_ms(50 if not moved else 10)
+        # Shorter sleep after a move pass to stay responsive to rapid
+        # target changes; longer sleep when idle to reduce CPU load
+        await uasyncio.sleep_ms(10 if moved else 50)

@@ -5,4 +5,3 @@
 # oder einen Kommentar in der requirements.txt ergänzen.
 
 ssd1306
-github:miguelgrinberg/microdot

@@ -10,6 +10,9 @@ _SESSION_DURATION_S = 3600  # seconds after config page first access (1 hour)
 
 _unlock_until  = 0  # end of 60s unlock window (time.time() epoch seconds)
 _session_until = 0  # end of 1h session
+_qr_until      = 0  # end of QR code display window
+
+_QR_DURATION_S = 15  # seconds to show QR code after short button press
 
 
 def unlock_config():
@@ -33,3 +36,15 @@ def is_unlock_active():
 def is_session_active():
     """Return True if within the active 1h config session."""
     return time.time() < _session_until
+
+
+def show_qr():
+    """Start QR code display for _QR_DURATION_S seconds.
+    Called by task_button on short button press."""
+    global _qr_until
+    _qr_until = time.time() + _QR_DURATION_S
+
+
+def is_qr_active():
+    """Return True while the QR code should be shown on the display."""
+    return time.time() < _qr_until

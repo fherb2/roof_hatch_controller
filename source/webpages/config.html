@@ -4,7 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Dachluken – Konfiguration</title>
-    <link rel="stylesheet" href="/static/bootstrap.min.css">
+    <link rel="stylesheet"
+          href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
+          onerror="this.onerror=null;this.href='/static/bootstrap.min.css'">
     <style>
         .field-edited   { background-color: rgba(255, 193,  7, 0.25) !important; border-color: #ffc107 !important; }
         .field-accepted { background-color: rgba( 13, 110,253, 0.12) !important; border-color: #0d6efd !important; }
@@ -54,7 +56,7 @@
                 <div id="panelGlobal" class="accordion-collapse collapse show">
                     <div class="accordion-body">
 
-                        <label class="form-label small fw-semibold">Bremse &#246;ffnen (&#181;s)</label>
+                        <label class="form-label small fw-semibold">Bremse Auf-Position (&#181;s)</label>
                         <div class="input-group input-group-sm mb-3">
                             <button class="btn btn-outline-secondary" @click="resetF(g.brake_open_us)">&#8635;</button>
                             <input type="number" class="form-control" :class="bgClass(g.brake_open_us)"
@@ -63,7 +65,7 @@
                                     @click="acceptNum(g.brake_open_us, 500, 2500)">&#10003;</button>
                         </div>
 
-                        <label class="form-label small fw-semibold">Bremse schlie&#223;en (&#181;s)</label>
+                        <label class="form-label small fw-semibold">Bremse Zu-Position (&#181;s)</label>
                         <div class="input-group input-group-sm mb-3">
                             <button class="btn btn-outline-secondary" @click="resetF(g.brake_close_us)">&#8635;</button>
                             <input type="number" class="form-control" :class="bgClass(g.brake_close_us)"
@@ -233,7 +235,8 @@
         <div>Konfiguration wird geladen&hellip;</div>
     </div>
 
-    <script src="/static/bootstrap.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
+            onerror="this.onerror=null;this.src='/static/bootstrap.bundle.min.js'"></script>
     <script>
     function configApp() {
         return {
@@ -245,10 +248,8 @@
 
             // Metadata for the four global delay fields (avoids repetition in HTML)
             gDelayFields: [
-                { key: 'delay_after_power_on_ms',    label: 'Verz\u00f6gerung nach Relais-Ein (ms)' },
-                { key: 'delay_after_brake_open_ms',  label: 'Verz\u00f6gerung nach Bremse auf (ms)' },
-                { key: 'delay_after_move_ms',        label: 'Verz\u00f6gerung nach Fahrt (ms)' },
-                { key: 'delay_after_brake_close_ms', label: 'Verz\u00f6gerung nach Bremse zu (ms)' },
+                { key: 'delay_after_brake_change_cmd_ms', label: 'Fahrtzeit Bremse (ms)' },
+                { key: 'delay_after_move_ms',             label: 'Wartezeit f\u00fcr Bremse-schlie\u00dfen in Zielposition (ms)' },
             ],
 
             /* ----------------------------------------------------------------
@@ -317,7 +318,15 @@
             /* ----------------------------------------------------------------
                Test move: send accepted µs value to task_control via API
             ---------------------------------------------------------------- */
-            testMove(hi, hatch_us) {
+            async testMove(hi, hatch_us) {
+                // Push accepted config values to in-memory state before
+                // moving so the test reflects the current UI values
+                // without requiring a save and reboot.
+                await fetch('/api/config/apply', {
+                    method:  'POST',
+                    headers: {'Content-Type': 'application/json'},
+                    body:    JSON.stringify(this.buildConfig()),
+                });
                 fetch('/api/hatch/' + hi + '/test', {
                     method:  'POST',
                     headers: {'Content-Type': 'application/json'},
@@ -331,12 +340,10 @@
             buildConfig() {
                 return {
                     global: {
-                        brake_open_us:              this.g.brake_open_us.val,
-                        brake_close_us:             this.g.brake_close_us.val,
-                        delay_after_power_on_ms:    this.g.delay_after_power_on_ms.val,
-                        delay_after_brake_open_ms:  this.g.delay_after_brake_open_ms.val,
-                        delay_after_move_ms:        this.g.delay_after_move_ms.val,
-                        delay_after_brake_close_ms: this.g.delay_after_brake_close_ms.val,
+                        brake_open_us:                   this.g.brake_open_us.val,
+                        brake_close_us:                  this.g.brake_close_us.val,
+                        delay_after_brake_change_cmd_ms: this.g.delay_after_brake_change_cmd_ms.val,
+                        delay_after_move_ms:             this.g.delay_after_move_ms.val,
                     },
                     hatches: this.hatches.map(h => ({
                         name:         h.name.val,
@@ -385,12 +392,10 @@
                     .then(cfg => {
                         const G  = cfg.global;
                         this.g = {
-                            brake_open_us:             this.fld(G.brake_open_us),
-                            brake_close_us:            this.fld(G.brake_close_us),
-                            delay_after_power_on_ms:   this.fld(G.delay_after_power_on_ms),
-                            delay_after_brake_open_ms: this.fld(G.delay_after_brake_open_ms),
-                            delay_after_move_ms:       this.fld(G.delay_after_move_ms),
-                            delay_after_brake_close_ms:this.fld(G.delay_after_brake_close_ms),
+                            brake_open_us:                   this.fld(G.brake_open_us),
+                            brake_close_us:                  this.fld(G.brake_close_us),
+                            delay_after_brake_change_cmd_ms: this.fld(G.delay_after_brake_change_cmd_ms),
+                            delay_after_move_ms:             this.fld(G.delay_after_move_ms),
                         };
                         this.hatches = cfg.hatches.map(h => ({
                             name:       this.fld(h.name),
@@ -410,6 +415,7 @@
         };
     }
     </script>
-    <script src="/static/alpine.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js"
+            onerror="this.onerror=null;this.src='/static/alpine.min.js'"></script>
 </body>
 </html>

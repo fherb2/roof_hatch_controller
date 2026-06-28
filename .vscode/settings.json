@@ -1,0 +1,30 @@
+{
+  "python.terminal.activateEnvironment": false,
+  "files.associations": {
+    "*.mpy": "python",
+    "*.my": "python"
+  },
+  "micropython-ide.deviceCodePath": "device_code",
+  "micropython-ide.targetMCU": "esp32s3",
+  "python.languageServer": "Pylance",
+  "python.analysis.typeCheckingMode": "basic",
+  "python.analysis.extraPaths": [
+    "/home/herbrand/.micropython-studio/stubs/micropython-esp32-stubs",
+    "/home/herbrand/.micropython-studio/.venv/lib/python3/site-packages"
+  ],
+  "python.autoComplete.extraPaths": [
+    "/home/herbrand/.micropython-studio/stubs/micropython-esp32-stubs",
+    "/home/herbrand/.micropython-studio/.venv/lib/python3/site-packages"
+  ],
+  "python.defaultInterpreterPath": "/home/herbrand/.micropython-studio/.venv/bin/python",
+  "python.analysis.useLibraryCodeForTypes": true,
+  "python.analysis.diagnosticSeverityOverrides": {
+    "reportMissingModuleSource": "none",
+    "reportMissingModuleStubs": "none"
+  },
+  "files.exclude": {
+    "**/__pycache__": true,
+    "**/.mypy_cache": true
+  }
+
+}

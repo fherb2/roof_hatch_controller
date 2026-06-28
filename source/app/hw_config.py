@@ -6,28 +6,29 @@
 # -----------------------------------------------------------------------------
 # I2C bus pins (XIAO ESP32-S3 on Seeed Expansion Board)
 # -----------------------------------------------------------------------------
-I2C_SDA_PIN = 4
-I2C_SCL_PIN = 5
+I2C_SDA_PIN = 5
+I2C_SCL_PIN = 6
 I2C_FREQ    = 400_000  # 400 kHz fast mode
 
 # -----------------------------------------------------------------------------
 # I2C device addresses
 # -----------------------------------------------------------------------------
 I2C_ADDR_OLED    = 0x3C  # SSD1306 OLED display
-I2C_ADDR_PCA9685 = 0x40  # PWM driver
+I2C_ADDR_PCA9685 = 0x7F  # PWM driver
 I2C_ADDR_RELAY   = 0x11  # Grove 4-channel SPDT relay (default address)
 I2C_ADDR_RTC     = 0x51  # PCF8563 RTC (on expansion board, reserved for later)
 
 # -----------------------------------------------------------------------------
 # User button (on Seeed Expansion Board)
 # -----------------------------------------------------------------------------
-BTN_USER_PIN = 1  # GPIO 1 = D1
+BTN_USER_PIN = 2  
 
 # Button timing
 BTN_DEBOUNCE_MS       = 50   # debounce time in milliseconds
 BTN_AP_MODE_HOLD_MS   = 0    # held at boot → AP mode (any duration, checked at startup)
 BTN_CONFIG_UNLOCK_MS  = 60_000   # config page unlock window after button press (ms)
 BTN_CONFIG_SESSION_MS = 3_600_000  # config session duration after page access (ms = 1 h)
+BTN_LONG_PRESS_MS     = 3_000      # hold duration to trigger long-press action (ms)
 
 # -----------------------------------------------------------------------------
 # PCA9685 PWM driver
@@ -40,6 +41,7 @@ PCA9685_FREQ_HZ = 50  # standard servo frequency
 # Extended:  500–2500 µs (conservative default covering most extended-range servos)
 SERVO_MIN_US = 500
 SERVO_MAX_US = 2500
+FAILSAFE_US  = -1    # sentinel: actual or target position unknown (fail-safe state)
 
 # PCA9685 channel assignments
 # Each hatch uses two servos: hatch (movement) and brake (locking mechanism)

@@ -1,8 +1,10 @@
 # failsafe.py - Fail-safe sequence for roof hatch controller
 #
 # Opens brakes and cuts servo power for all hatches in sequence,
-# allowing them to close under their own weight. The brake spring
-# closes automatically when power is cut.
+# allowing them to close under their own weight. The brake servo is
+# left powered-off in the open position; the brake spring alone cannot
+# force the cam mechanism past the unpowered servo, so the hatch
+# remains unlocked after closing.
 #
 # Runs synchronously with time.sleep_ms() – safe to call before
 # the uasyncio event loop starts and without config.json being readable.
@@ -21,7 +23,10 @@ def fail_safe_close_all(hw, brake_open_us=None):
       1. Set brake servo PWM to open position (before relay-on)
       2. Relay on  →  brake servo receives power, moves to open
       3. Wait BRAKE_TRAVEL_MS for brake servo to reach open position
-      4. Relay off →  hatch closes under gravity, brake snaps closed by spring
+      4. Relay off →  hatch closes under gravity; brake servo is left
+                      powered-off in the open position (spring cannot
+                      force the cam past the unpowered servo →
+                      hatch unlocked after closing)
 
     Only one hatch is powered at a time to stay within PSU limits.
 
@@ -49,7 +54,9 @@ def fail_safe_close_all(hw, brake_open_us=None):
         # Wait for brake servo to reach open position
         time.sleep_ms(BRAKE_TRAVEL_MS)
 
-        # Cut power – hatch closes under gravity, brake snaps shut by spring
+        # Cut power – hatch closes under gravity; brake servo is left
+        # powered-off in the open position (spring cannot force cam
+        # past unpowered servo → hatch unlocked after closing)
         hw.relay.off(relay_ch)
 
         # Brief pause between hatches to avoid PSU overload

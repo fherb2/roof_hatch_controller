@@ -8,7 +8,8 @@
 # Detects falling edge (1→0) with software debounce.
 
 import uasyncio
-from app.hw_config import BTN_DEBOUNCE_MS
+import time
+from app.hw_config import BTN_DEBOUNCE_MS, BTN_LONG_PRESS_MS
 from app import session
 
 _POLL_MS = 50  # button polling interval in milliseconds
@@ -34,7 +35,24 @@ async def task_button(hw, config, state, targets):
             # Debounce: wait and confirm button is still pressed
             await uasyncio.sleep_ms(BTN_DEBOUNCE_MS)
             if btn.value() == 0:
-                session.unlock_config()
+                press_start = time.ticks_ms()
+                long_press  = False
 
-        last_state = current_state
+                # Wait for release or long-press threshold
+                while btn.value() == 0:
+                    if time.ticks_diff(time.ticks_ms(), press_start) >= BTN_LONG_PRESS_MS:
+                        # Long press: unlock config page
+                        long_press = True
+                        session.unlock_config()
+                        # Wait for button release before continuing
+                        while btn.value() == 0:
+                            await uasyncio.sleep_ms(_POLL_MS)
+                        break
+                    await uasyncio.sleep_ms(_POLL_MS)
+
+                if not long_press:
+                    # Short press: show QR code on display
+                    session.show_qr()
+
+        last_state = btn.value()  # re-read after potential wait periods
         await uasyncio.sleep_ms(_POLL_MS)

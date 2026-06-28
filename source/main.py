@@ -1,18 +1,48 @@
-# main.py - Application entry point for roof hatch controller
-#
-# Startup sequence:
-#   1. Init OLED display early so all subsequent steps can show status
-#   2. Init remaining hardware (PCA9685, relay, button)
-#   3. Start Wi-Fi: AP config mode or client mode depending on boot.AP_MODE
-#   4. Launch async tasks
+"""
+main.py – Application entry point for the roof hatch controller.
 
+Startup sequence:
+  Stage 0:  WDT-reset detection – if the previous run was killed by the
+            hardware watchdog, run fail_safe_close_all() before anything
+            else to bring all hatches to a safe physical state.
+  Stage 1:  OLED display early init – all subsequent stages can report
+            status on the display.
+  Stage 1b: AP mode – if the user button was held on power-up, start
+            the Wi-Fi setup access point and serve the config page.
+            Device resets after the user saves new credentials.
+  Stage 2:  Remaining hardware init (PCA9685, relay, button).
+  Stage 2b: Load config.json and state.json.  On WDT reset, mark all
+            hatches as FAILSAFE_US in state after the physical
+            fail-safe sequence has already run in Stage 0.
+  Stage 3:  Wi-Fi client mode.
+  Stage 4:  Build targets dict from persisted Soll values and start all
+            async tasks via uasyncio.gather().
+"""
+
+import gc
+gc.collect()
+import network
+network.WLAN(network.STA_IF).active(True)  # reserve WiFi memory early
+gc.collect()
 import uasyncio
 import machine
-import boot
-from app.failsafe import fail_safe_close_all
+from machine import Pin
+import time
+from app.hw_init import init_display_early, init_hardware, HardwareInitError, HardwareBundle
+
+def _button_pressed():
+    from app.hw_config import BTN_USER_PIN
+    btn = Pin(BTN_USER_PIN, Pin.IN, Pin.PULL_UP)
+    if btn.value() == 0:
+        time.sleep_ms(50)
+        return btn.value() == 0
+    return False
+
+AP_MODE = _button_pressed()
+from app.fatal_error import fatal_error
 from app.task_watchdog import task_watchdog
-from app.hw_init import init_display_early, init_hardware, HardwareInitError
 from app.wifi import start_ap_mode, start_client_mode
+from app.failsafe import fail_safe_close_all
 from app.task_display import task_display
 from app.task_control import task_control
 from app.task_button import task_button
@@ -39,13 +69,22 @@ def _boot_status(display, line, text, invert=False):
 
 
 async def main():
+    """Boot sequence and async task launcher for the hatch controller.
+
+    Runs all startup stages in order.  Returns early on unrecoverable
+    hardware or config errors; in that case the async tasks never start
+    and the hardware WDT is never initialised.
+    """
     display = None
+
+    # Capture reset cause once; referenced in Stage 0 and Stage 2b.
+    wdt_reset = machine.reset_cause() == machine.WDT_RESET
 
     # ------------------------------------------------------------------
     # Stage 0: Fail-safe after WDT reset
     # Run before anything else – config.json may not be readable.
     # ------------------------------------------------------------------
-    if machine.reset_cause() == machine.WDT_RESET:
+    if wdt_reset:
         try:
             from app.hw_init import init_hw_failsafe
             hw_fs = init_hw_failsafe()
@@ -62,36 +101,45 @@ async def main():
         i2c, display = init_display_early()
         _boot_status(display, 0, "Booting...")
     except HardwareInitError as e:
-        print(f"FATAL: display init failed: {e}")
-        return
+        await fatal_error(f"Display init failed: {e}")
 
     # ------------------------------------------------------------------
     # Stage 2: Remaining hardware init
     # ------------------------------------------------------------------
+    # ------------------------------------------------------------------
+    # Stage 1b: AP mode – no hardware needed, device reboots after config
+    # ------------------------------------------------------------------
+    if AP_MODE:
+        _boot_status(display, 1, "AP mode...")
+        hw = HardwareBundle(i2c, None, None, display, None)
+        await start_ap_mode(hw)
+        await task_webserver(hw, {}, {}, [])
+        return  # unreachable, device resets after wifi save
+
     _boot_status(display, 1, "Init hardware...")
     try:
         hw = init_hardware(i2c=i2c, display=display)
     except HardwareInitError as e:
-        _boot_status(display, 2, "HW ERROR:", invert=True)
-        _boot_status(display, 3, str(e)[:16], invert=True)
-        print(f"FATAL: hardware init failed: {e}")
-        return
+        await fatal_error(f"Hardware init failed: {e}", display=display)
 
     _boot_status(display, 2, "Hardware OK")
 
     # ------------------------------------------------------------------
     # Stage 2b: Load config and state
     # ------------------------------------------------------------------
+    from app.hw_config import FAILSAFE_US
     from app.state import (load_config, load_state, save_state,
                            create_default_state, ConfigError, StateError)
+    from app.config_migration import migrate_config, ConfigMigrationError
     _boot_status(display, 3, "Loading config")
+    try:
+        migrate_config()
+    except ConfigMigrationError as e:
+        await fatal_error(f"Config template missing: {e}", hw=hw, display=display)
     try:
         config = load_config()
     except ConfigError as e:
-        _boot_status(display, 4, "CFG ERROR:", invert=True)
-        _boot_status(display, 5, str(e)[:16], invert=True)
-        print(f"FATAL: config error: {e}")
-        return
+        await fatal_error(f"Config invalid: {e}", hw=hw, display=display)
 
     try:
         state = load_state()
@@ -99,20 +147,25 @@ async def main():
         state = create_default_state(config)
         save_state(state)
 
+    if wdt_reset:
+        # Physical fail-safe has already run in Stage 0. Now mark all
+        # hatches as FAILSAFE_US so state.json matches the physical
+        # reality: positions are unknown, hatches are unlocked.
+        for h in state["hatches"]:
+            h["hatch_us"]  = FAILSAFE_US
+            h["target_us"] = FAILSAFE_US
+        save_state(state)
+
     # ------------------------------------------------------------------
     # Stage 3: Wi-Fi
     # ------------------------------------------------------------------
-    if boot.AP_MODE:
-        _boot_status(display, 5, "AP mode")
-        await start_ap_mode(hw)
-    else:
-        _boot_status(display, 5, "WiFi connecting")
-        await start_client_mode(hw)
+    _boot_status(display, 5, "WiFi connecting")
+    await start_client_mode(hw)
 
     # ------------------------------------------------------------------
     # Stage 4: Launch async tasks
-    # All tasks run indefinitely inside their own async loops.
     # ------------------------------------------------------------------
+    targets = [{"hatch_us": h["target_us"]} for h in state["hatches"]]
     _boot_status(display, 6, "Starting...")
     await uasyncio.gather(
         task_watchdog(),
