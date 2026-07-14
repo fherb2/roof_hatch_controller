@@ -8,19 +8,18 @@
 #   GET  /sse                 → SSE live status stream
 #   GET  /api/config          → current config as JSON
 #   POST /api/hatch/<i>/pos   → set hatch target by position index
-#   POST /api/hatch/<i>/test  → test move to exact µs (session required)
-#   POST /api/config          → validate + save new config, then restart
+#   POST /api/hatch/<i>/test  → test move to exact degrees (session required)
+#   POST /api/config          → validate + persist config immediately, no restart
 #   POST /api/wifi            → save Wi-Fi credentials, then restart
 #   GET  /api/wifi/scan       → scan available SSIDs, return JSON list
 
 import uasyncio
 import ujson
-import machine
 import network
 from microdot import Microdot, Response, send_file
 
 from app import session
-from app.hw_config import NUM_HATCHES, FAILSAFE_US
+from app.hw_config import NUM_HATCHES, FAILSAFE_DEG
 from app.state import validate_config, ConfigError, save_state
 from shared.json_utils import pretty_json
 from app.wifi import save_wifi_config, WifiConfigError
@@ -49,10 +48,10 @@ def _json(data, status=200):
     )
 
 
-def _find_pos_idx(hatch_us, positions):
-    """Return 0-based index of hatch_us in positions list, or None."""
+def _find_pos_idx(hatch_deg, positions):
+    """Return 0-based index of hatch_deg in positions list, or None."""
     for i, pos in enumerate(positions):
-        if pos["hatch_us"] == hatch_us:
+        if pos["hatch_deg"] == hatch_deg:
             return i
     return None
 
@@ -61,7 +60,7 @@ def _build_status():
     """Build the SSE status payload pushed to all clients every 500 ms.
 
     The 'failsafe' field per hatch is True when the actual position is
-    FAILSAFE_US (-1), meaning the hatch is in an unverified closed state
+    FAILSAFE_DEG (-1), meaning the hatch is in an unverified closed state
     after a fail-safe sequence.  In that case pos_idx is null and no
     position button is highlighted as active in the web UI.
     """
@@ -76,11 +75,11 @@ def _build_status():
         hatches.append({
             "name":          _config["hatches"][i]["name"],
             "short_name":    _config["hatches"][i]["short_name"],
-            "current_us":    s["hatch_us"],
-            "target_us":     t["hatch_us"],
-            "moving":        t["hatch_us"] != s["hatch_us"],
-            "failsafe":      s["hatch_us"] == FAILSAFE_US,
-            "pos_idx":       _find_pos_idx(s["hatch_us"], positions),
+            "current_deg":   s["hatch_deg"],
+            "target_deg":    t["hatch_deg"],
+            "moving":        t["hatch_deg"] != s["hatch_deg"],
+            "failsafe":      s["hatch_deg"] == FAILSAFE_DEG,
+            "pos_idx":       _find_pos_idx(s["hatch_deg"], positions),
             "num_positions": len(positions),
         })
 
@@ -180,7 +179,7 @@ async def sse(request):
 async def set_position(request, idx):
     """Set hatch target by named position index and persist the new target.
 
-    Looks up the µs value for the requested position in the hatch's
+    Looks up the degree value for the requested position in the hatch's
     positions list, writes it to the RAM target dict (which triggers the
     control loop to start moving) and persists the new target to
     state.json so that it survives a reboot.
@@ -198,21 +197,21 @@ async def set_position(request, idx):
     if not 0 <= pos_idx < len(positions):
         return _json({'error': 'invalid position_idx'}, 400)
 
-    new_us = positions[pos_idx]["hatch_us"]
-    _targets[idx]["hatch_us"] = new_us
-    _state["hatches"][idx]["target_us"] = new_us
+    new_deg = positions[pos_idx]["hatch_deg"]
+    _targets[idx]["hatch_deg"] = new_deg
+    _state["hatches"][idx]["target_deg"] = new_deg
     save_state(_state)
     return _json({'ok': True})
 
 
 @app.route('/api/hatch/<idx>/test', methods=['POST'])
 async def test_position(request, idx):
-    """Move hatch to an exact µs value for visual calibration.
+    """Move hatch to an exact angle in degrees for visual calibration.
 
     Requires an active config session.  Sets the RAM target (triggering
     task_control to run the full brake-open → move → brake-close
     sequence) and persists the target to state.json.  The value must lie
-    within [hatch_min_us, hatch_max_us] from config.
+    within [hard_stop_min_deg, hard_stop_max_deg] from config.
     """
     if not session.is_session_active():
         return _json({'error': 'not authorized'}, 403)
@@ -222,16 +221,16 @@ async def test_position(request, idx):
         return _json({'error': 'invalid hatch index'}, 400)
 
     body = request.json
-    if body is None or 'hatch_us' not in body:
-        return _json({'error': 'missing hatch_us'}, 400)
+    if body is None or 'hatch_deg' not in body:
+        return _json({'error': 'missing hatch_deg'}, 400)
 
-    hatch_us = int(body['hatch_us'])
-    h        = _config["hatches"][idx]
-    if not h["hatch_min_us"] <= hatch_us <= h["hatch_max_us"]:
-        return _json({'error': 'hatch_us outside hardstop range'}, 400)
+    hatch_deg = int(body['hatch_deg'])
+    hs        = _config["global"]["hatch_servo"]
+    if not hs["hard_stop_min_deg"] <= hatch_deg <= hs["hard_stop_max_deg"]:
+        return _json({'error': 'hatch_deg outside hardstop range'}, 400)
 
-    _targets[idx]["hatch_us"] = hatch_us
-    _state["hatches"][idx]["target_us"] = hatch_us
+    _targets[idx]["hatch_deg"] = hatch_deg
+    _state["hatches"][idx]["target_deg"] = hatch_deg
     save_state(_state)
     return _json({'ok': True})
 
@@ -246,40 +245,16 @@ async def get_config(request):
     return _json(_config)
 
 
-@app.route('/api/config/apply', methods=['POST'])
-async def apply_config(request):
-    """Apply a config dict to the in-memory state without persisting to flash.
-
-    Validates the incoming config, then updates _config in place so that
-    task_control immediately uses the new timing and servo values.  Used
-    by the config page to make test moves reflect accepted field values
-    without requiring a save and reboot.
-
-    Requires an active session.
-    """
-    if not session.is_session_active():
-        return _json({'error': 'not authorized'}, 403)
-    new_cfg = request.json
-    if new_cfg is None:
-        return _json({'error': 'invalid JSON body'}, 400)
-    try:
-        validate_config(new_cfg)
-    except ConfigError as e:
-        return _json({'error': str(e)}, 400)
-    # Update in place so task_control and task_display see the changes
-    # immediately without needing a reference swap.
-    _config["global"].update(new_cfg["global"])
-    for i, h in enumerate(new_cfg["hatches"]):
-        _config["hatches"][i].update(h)
-    return _json({'ok': True})
-
-
 @app.route('/api/config', methods=['POST'])
 async def post_config(request):
-    """Validate and save new configuration, then restart.
+    """Validate, persist and apply a new configuration immediately.
 
-    Requires active session. Full validation runs before writing.
-    On success, machine.reset() is called and the response is never sent.
+    Requires active session. Full validation runs before writing. Writes
+    the new config to flash and updates the in-RAM _config in place (so
+    task_control and task_display pick up the change on their very next
+    pass) - no restart is needed or performed. Called for every single
+    field accepted on the config page, and for every position added or
+    removed, each time with the complete current document.
     """
     if not session.is_session_active():
         return _json({'error': 'not authorized'}, 403)
@@ -300,7 +275,13 @@ async def post_config(request):
     except OSError as e:
         return _json({'error': f'write failed: {e}'}, 500)
 
-    machine.reset()
+    # Update in place so task_control and task_display see the change
+    # immediately without needing a reference swap.
+    _config["global"].update(new_cfg["global"])
+    for i, h in enumerate(new_cfg["hatches"]):
+        _config["hatches"][i].update(h)
+
+    return _json({'ok': True})
 
 
 # ---------------------------------------------------------------------------

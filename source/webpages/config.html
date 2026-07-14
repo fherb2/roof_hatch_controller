@@ -8,8 +8,7 @@
           href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css"
           onerror="this.onerror=null;this.href='/static/bootstrap.min.css'">
     <style>
-        .field-edited   { background-color: rgba(255, 193,  7, 0.25) !important; border-color: #ffc107 !important; }
-        .field-accepted { background-color: rgba( 13, 110,253, 0.12) !important; border-color: #0d6efd !important; }
+        .field-edited { background-color: rgba(255, 193,  7, 0.25) !important; border-color: #ffc107 !important; }
     </style>
 </head>
 <body class="bg-light" x-data="configApp()">
@@ -19,24 +18,19 @@
         <div class="container-fluid">
             <a href="/" class="btn btn-sm btn-outline-light">&#8592; Zur&#252;ck</a>
             <span class="navbar-brand mb-0 mx-2 h6">&#9881; Konfiguration</span>
-            <button class="btn btn-sm btn-warning" @click="save()" :disabled="saving">
-                <span x-show="!saving">&#128190; Speichern</span>
-                <span x-show="saving">&#8987;</span>
-            </button>
         </div>
     </nav>
 
-    <!-- Status message -->
-    <div x-show="saveMsg" class="alert alert-info mx-3 mt-3 mb-0 py-2 small"
-         x-text="saveMsg"></div>
+    <!-- Error message (only shown when a field could not be persisted) -->
+    <div x-show="errorMsg" class="alert alert-danger mx-3 mt-3 mb-0 py-2 small"
+         x-text="errorMsg"></div>
 
     <!-- Legend -->
     <div class="alert alert-light border mx-3 mt-3 mb-0 py-2 small">
         <strong>&#8635;</strong> Zur&#252;cksetzen &ensp;
-        <strong>&#10003;</strong> &#220;bernehmen &ensp;
+        <strong>&#10003;</strong> &#220;bernehmen (wird sofort dauerhaft gespeichert) &ensp;
         <strong>&#9654;</strong> Anfahren<br>
-        <span class="px-2 me-1" style="background:rgba(255,193,7,.3)">&#9632;</span>editiert, nicht &#252;bernommen &ensp;
-        <span class="px-2 me-1" style="background:rgba(13,110,253,.15)">&#9632;</span>&#252;bernommen, nicht gespeichert
+        <span class="px-2 me-1" style="background:rgba(255,193,7,.3)">&#9632;</span>editiert, noch nicht &#252;bernommen
     </div>
 
     <!-- Main content: hidden until config loaded -->
@@ -44,7 +38,7 @@
         <div class="accordion" id="cfgAccordion">
 
             <!-- ============================================================
-                 Global settings
+                 Global settings: hatch (lever) servo + brake servo
                  ============================================================ -->
             <div class="accordion-item">
                 <h2 class="accordion-header">
@@ -56,37 +50,111 @@
                 <div id="panelGlobal" class="accordion-collapse collapse show">
                     <div class="accordion-body">
 
-                        <label class="form-label small fw-semibold">Bremse Auf-Position (&#181;s)</label>
+                        <div class="fw-semibold small mb-2">Lukenservo (f&#252;r alle 4 Luken einheitlich)</div>
+
+                        <label class="form-label small fw-semibold">Stellbereich</label>
                         <div class="input-group input-group-sm mb-3">
-                            <button class="btn btn-outline-secondary" @click="resetF(g.brake_open_us)">&#8635;</button>
-                            <input type="number" class="form-control" :class="bgClass(g.brake_open_us)"
-                                   x-model="g.brake_open_us.draft" min="500" max="2500">
+                            <button class="btn btn-outline-secondary" @click="resetF(hs.range_deg)">&#8635;</button>
+                            <select class="form-select" :class="bgClass(hs.range_deg)"
+                                    x-model="hs.range_deg.draft">
+                                <option value="180">180&#176;</option>
+                                <option value="270">270&#176;</option>
+                            </select>
                             <button class="btn btn-outline-success"
-                                    @click="acceptNum(g.brake_open_us, 500, 2500)">&#10003;</button>
+                                    @click="acceptSelect(hs.range_deg)">&#10003;</button>
                         </div>
 
-                        <label class="form-label small fw-semibold">Bremse Zu-Position (&#181;s)</label>
-                        <div class="input-group input-group-sm mb-3">
-                            <button class="btn btn-outline-secondary" @click="resetF(g.brake_close_us)">&#8635;</button>
-                            <input type="number" class="form-control" :class="bgClass(g.brake_close_us)"
-                                   x-model="g.brake_close_us.draft" min="500" max="2500">
-                            <button class="btn btn-outline-success"
-                                    @click="acceptNum(g.brake_close_us, 500, 2500)">&#10003;</button>
-                        </div>
-
-                        <!-- Global delay fields via metadata array -->
-                        <template x-for="fd in gDelayFields" :key="fd.key">
-                            <div>
-                                <label class="form-label small fw-semibold" x-text="fd.label"></label>
-                                <div class="input-group input-group-sm mb-3">
-                                    <button class="btn btn-outline-secondary" @click="resetF(g[fd.key])">&#8635;</button>
-                                    <input type="number" class="form-control" :class="bgClass(g[fd.key])"
-                                           x-model="g[fd.key].draft" min="0" max="10000">
+                        <div class="row g-2 mb-3">
+                            <div class="col-6">
+                                <label class="form-label small fw-semibold">Impulszeit min (&#181;s)</label>
+                                <div class="input-group input-group-sm">
+                                    <button class="btn btn-outline-secondary" @click="resetF(hs.pulse_min_us)">&#8635;</button>
+                                    <input type="number" class="form-control" :class="bgClass(hs.pulse_min_us)"
+                                           x-model="hs.pulse_min_us.draft" min="500" max="2500">
                                     <button class="btn btn-outline-success"
-                                            @click="acceptNum(g[fd.key], 0, 10000)">&#10003;</button>
+                                            @click="acceptNum(hs.pulse_min_us, 500, 2500)">&#10003;</button>
                                 </div>
                             </div>
-                        </template>
+                            <div class="col-6">
+                                <label class="form-label small fw-semibold">Impulszeit max (&#181;s)</label>
+                                <div class="input-group input-group-sm">
+                                    <button class="btn btn-outline-secondary" @click="resetF(hs.pulse_max_us)">&#8635;</button>
+                                    <input type="number" class="form-control" :class="bgClass(hs.pulse_max_us)"
+                                           x-model="hs.pulse_max_us.draft" min="500" max="2500">
+                                    <button class="btn btn-outline-success"
+                                            @click="acceptNum(hs.pulse_max_us, 500, 2500)">&#10003;</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="row g-2 mb-3">
+                            <div class="col-6">
+                                <label class="form-label small fw-semibold">Hard-Stop min (&#176;)</label>
+                                <div class="input-group input-group-sm">
+                                    <button class="btn btn-outline-secondary" @click="resetF(hs.hard_stop_min_deg)">&#8635;</button>
+                                    <input type="number" class="form-control" :class="bgClass(hs.hard_stop_min_deg)"
+                                           x-model="hs.hard_stop_min_deg.draft" min="0" :max="hs.range_deg.committed">
+                                    <button class="btn btn-outline-success"
+                                            @click="acceptNum(hs.hard_stop_min_deg, 0, hs.range_deg.committed)">&#10003;</button>
+                                </div>
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label small fw-semibold">Hard-Stop max (&#176;)</label>
+                                <div class="input-group input-group-sm">
+                                    <button class="btn btn-outline-secondary" @click="resetF(hs.hard_stop_max_deg)">&#8635;</button>
+                                    <input type="number" class="form-control" :class="bgClass(hs.hard_stop_max_deg)"
+                                           x-model="hs.hard_stop_max_deg.draft" min="0" :max="hs.range_deg.committed">
+                                    <button class="btn btn-outline-success"
+                                            @click="acceptNum(hs.hard_stop_max_deg, 0, hs.range_deg.committed)">&#10003;</button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <label class="form-label small fw-semibold">Geschwindigkeit (&#176;/s)</label>
+                        <div class="input-group input-group-sm mb-4">
+                            <button class="btn btn-outline-secondary" @click="resetF(hs.speed_deg_per_s)">&#8635;</button>
+                            <input type="number" class="form-control" :class="bgClass(hs.speed_deg_per_s)"
+                                   x-model="hs.speed_deg_per_s.draft" min="1" max="500">
+                            <button class="btn btn-outline-success"
+                                    @click="acceptNum(hs.speed_deg_per_s, 1, 500)">&#10003;</button>
+                        </div>
+
+                        <div class="fw-semibold small mb-2">Bremsservo (f&#252;r alle 4 Luken einheitlich)</div>
+
+                        <label class="form-label small fw-semibold">Stellbereich</label>
+                        <div class="input-group input-group-sm mb-3">
+                            <button class="btn btn-outline-secondary" @click="resetF(bs.range_deg)">&#8635;</button>
+                            <select class="form-select" :class="bgClass(bs.range_deg)"
+                                    x-model="bs.range_deg.draft">
+                                <option value="180">180&#176;</option>
+                                <option value="270">270&#176;</option>
+                            </select>
+                            <button class="btn btn-outline-success"
+                                    @click="acceptSelect(bs.range_deg)">&#10003;</button>
+                        </div>
+
+                        <div class="row g-2 mb-3">
+                            <div class="col-6">
+                                <label class="form-label small fw-semibold">Impulszeit min (&#181;s)</label>
+                                <div class="input-group input-group-sm">
+                                    <button class="btn btn-outline-secondary" @click="resetF(bs.pulse_min_us)">&#8635;</button>
+                                    <input type="number" class="form-control" :class="bgClass(bs.pulse_min_us)"
+                                           x-model="bs.pulse_min_us.draft" min="500" max="2500">
+                                    <button class="btn btn-outline-success"
+                                            @click="acceptNum(bs.pulse_min_us, 500, 2500)">&#10003;</button>
+                                </div>
+                            </div>
+                            <div class="col-6">
+                                <label class="form-label small fw-semibold">Impulszeit max (&#181;s)</label>
+                                <div class="input-group input-group-sm">
+                                    <button class="btn btn-outline-secondary" @click="resetF(bs.pulse_max_us)">&#8635;</button>
+                                    <input type="number" class="form-control" :class="bgClass(bs.pulse_max_us)"
+                                           x-model="bs.pulse_max_us.draft" min="500" max="2500">
+                                    <button class="btn btn-outline-success"
+                                            @click="acceptNum(bs.pulse_max_us, 500, 2500)">&#10003;</button>
+                                </div>
+                            </div>
+                        </div>
 
                     </div>
                 </div>
@@ -101,7 +169,7 @@
                         <button class="accordion-button collapsed" type="button"
                                 data-bs-toggle="collapse"
                                 :data-bs-target="'#panelH' + hi">
-                            <span x-text="h.name.val"></span>
+                            <span x-text="h.name.committed"></span>
                         </button>
                     </h2>
                     <div :id="'panelH' + hi" class="accordion-collapse collapse">
@@ -127,86 +195,62 @@
                                         @click="acceptStr(h.short_name, 6)">&#10003;</button>
                             </div>
 
-                            <!-- Hardstops (side by side) -->
+                            <!-- Brake open/close angle (side by side) -->
                             <div class="row g-2 mb-3">
                                 <div class="col-6">
-                                    <label class="form-label small fw-semibold">Min-Hardstop (&#181;s)</label>
+                                    <label class="form-label small fw-semibold">Bremse Auf (&#176;)</label>
                                     <div class="input-group input-group-sm">
-                                        <button class="btn btn-outline-secondary" @click="resetF(h.min)">&#8635;</button>
-                                        <input type="number" class="form-control" :class="bgClass(h.min)"
-                                               x-model="h.min.draft" min="500" max="2500">
+                                        <button class="btn btn-outline-secondary" @click="resetF(h.brake_open_deg)">&#8635;</button>
+                                        <input type="number" class="form-control" :class="bgClass(h.brake_open_deg)"
+                                               x-model="h.brake_open_deg.draft" min="0" :max="bs.range_deg.committed">
                                         <button class="btn btn-outline-success"
-                                                @click="acceptNum(h.min, 500, h.max.val - 1)">&#10003;</button>
+                                                @click="acceptNum(h.brake_open_deg, 0, bs.range_deg.committed)">&#10003;</button>
                                     </div>
                                 </div>
                                 <div class="col-6">
-                                    <label class="form-label small fw-semibold">Max-Hardstop (&#181;s)</label>
+                                    <label class="form-label small fw-semibold">Bremse Zu (&#176;)</label>
                                     <div class="input-group input-group-sm">
-                                        <button class="btn btn-outline-secondary" @click="resetF(h.max)">&#8635;</button>
-                                        <input type="number" class="form-control" :class="bgClass(h.max)"
-                                               x-model="h.max.draft" min="500" max="2500">
+                                        <button class="btn btn-outline-secondary" @click="resetF(h.brake_close_deg)">&#8635;</button>
+                                        <input type="number" class="form-control" :class="bgClass(h.brake_close_deg)"
+                                               x-model="h.brake_close_deg.draft" min="0" :max="bs.range_deg.committed">
                                         <button class="btn btn-outline-success"
-                                                @click="acceptNum(h.max, h.min.val + 1, 2500)">&#10003;</button>
+                                                @click="acceptNum(h.brake_close_deg, 0, bs.range_deg.committed)">&#10003;</button>
                                     </div>
                                 </div>
                             </div>
 
-                            <!-- Step size / interval (side by side) -->
-                            <div class="row g-2 mb-3">
-                                <div class="col-6">
-                                    <label class="form-label small fw-semibold">Schrittgr&#246;&#223;e (&#181;s)</label>
-                                    <div class="input-group input-group-sm">
-                                        <button class="btn btn-outline-secondary" @click="resetF(h.step_us)">&#8635;</button>
-                                        <input type="number" class="form-control" :class="bgClass(h.step_us)"
-                                               x-model="h.step_us.draft" min="1" max="500">
-                                        <button class="btn btn-outline-success"
-                                                @click="acceptNum(h.step_us, 1, 500)">&#10003;</button>
-                                    </div>
-                                </div>
-                                <div class="col-6">
-                                    <label class="form-label small fw-semibold">Intervall (ms)</label>
-                                    <div class="input-group input-group-sm">
-                                        <button class="btn btn-outline-secondary" @click="resetF(h.step_ms)">&#8635;</button>
-                                        <input type="number" class="form-control" :class="bgClass(h.step_ms)"
-                                               x-model="h.step_ms.draft" min="1" max="1000">
-                                        <button class="btn btn-outline-success"
-                                                @click="acceptNum(h.step_ms, 1, 1000)">&#10003;</button>
-                                    </div>
-                                </div>
-                            </div>
-
-                            <!-- Positions list -->
+                            <!-- Positions list: positions[0] = ZU, positions[last] = AUF, fixed -->
                             <div class="fw-semibold small mb-2">Rastpositionen</div>
 
                             <template x-for="(pos, pi) in h.positions" :key="pi">
                                 <div>
                                     <label class="form-label small"
-                                           x-text="posLabel(pi, h.positions.length) + ' (&#181;s)'">
+                                           x-text="posLabel(pi, h.positions.length) + ' (&#176;)'">
                                     </label>
                                     <div class="input-group input-group-sm mb-2">
                                         <button class="btn btn-outline-secondary"
                                                 @click="resetF(pos)">&#8635;</button>
                                         <input type="number" class="form-control" :class="bgClass(pos)"
                                                x-model="pos.draft"
-                                               :min="h.min.val" :max="h.max.val">
+                                               :min="hs.hard_stop_min_deg.committed" :max="hs.hard_stop_max_deg.committed">
                                         <button class="btn btn-outline-success"
-                                                @click="acceptNum(pos, h.min.val, h.max.val)"
+                                                @click="acceptNum(pos, hs.hard_stop_min_deg.committed, hs.hard_stop_max_deg.committed)"
                                                 title="&#220;bernehmen">&#10003;</button>
                                         <button class="btn btn-outline-info"
-                                                :disabled="pos.draft !== '' + pos.val"
-                                                @click="testMove(hi, pos.val)"
+                                                :disabled="pos.draft !== '' + pos.committed"
+                                                @click="testMove(hi, pos.committed)"
                                                 title="Anfahren">&#9654;</button>
                                     </div>
                                 </div>
                             </template>
 
-                            <!-- Add / remove position -->
+                            <!-- Add / remove intermediate position; ZU and AUF stay fixed -->
                             <div class="d-flex gap-2 mt-1">
                                 <button class="btn btn-sm btn-outline-secondary"
-                                        @click="addPos(hi)">+ Position</button>
+                                        @click="addPos(hi)">+ Zwischenposition</button>
                                 <button class="btn btn-sm btn-outline-secondary"
                                         :disabled="h.positions.length <= 2"
-                                        @click="removePos(hi)">&#8722; Position</button>
+                                        @click="removePos(hi)">&#8722; Zwischenposition</button>
                             </div>
 
                         </div>
@@ -215,17 +259,6 @@
             </template>
 
         </div><!-- /accordion -->
-
-        <!-- Bottom save -->
-        <div class="d-grid mt-4">
-            <button class="btn btn-warning" @click="save()" :disabled="saving">
-                <span x-show="!saving">&#128190; Speichern und neu starten</span>
-                <span x-show="saving" x-text="saveMsg"></span>
-            </button>
-        </div>
-        <p class="text-center text-muted small mt-2">
-            Nicht gespeicherte &#196;nderungen gehen beim Schlie&#223;en der Seite verloren.
-        </p>
 
     </div><!-- /container -->
 
@@ -240,23 +273,19 @@
     <script>
     function configApp() {
         return {
-            loaded:  false,
-            saving:  false,
-            saveMsg: '',
-            g:       {},
-            hatches: [],
-
-            // Metadata for the four global delay fields (avoids repetition in HTML)
-            gDelayFields: [
-                { key: 'delay_after_brake_change_cmd_ms', label: 'Fahrtzeit Bremse (ms)' },
-                { key: 'delay_after_move_ms',             label: 'Wartezeit f\u00fcr Bremse-schlie\u00dfen in Zielposition (ms)' },
-            ],
+            loaded:   false,
+            errorMsg: '',
+            hs:       {},   // hatch_servo (global, all 4 hatches)
+            bs:       {},   // brake_servo (global, all 4 hatches)
+            hatches:  [],
 
             /* ----------------------------------------------------------------
-               Field factory: wraps a raw value in {orig, val, draft}
+               Field factory: wraps a committed value plus an editable draft.
+               Acceptance persists immediately - there is no separate
+               "accepted but not yet saved" state anymore.
             ---------------------------------------------------------------- */
-            fld(orig) {
-                return { orig, val: orig, draft: '' + orig };
+            fld(committed) {
+                return { committed, draft: '' + committed };
             },
 
             /* ----------------------------------------------------------------
@@ -264,30 +293,63 @@
             ---------------------------------------------------------------- */
             bgClass(f) {
                 if (!f) return '';
-                if (f.draft !== '' + f.val) return 'field-edited';
-                if (f.val   !== f.orig)     return 'field-accepted';
-                return '';
+                return (f.draft !== '' + f.committed) ? 'field-edited' : '';
             },
 
             /* ----------------------------------------------------------------
-               Accept / reset helpers
+               Persist the full current document to the device. Called after
+               every single field acceptance and every position add/remove.
+               Returns true on success, false on failure (caller reverts).
             ---------------------------------------------------------------- */
-            acceptNum(f, min, max) {
-                const v = Number(f.draft);
-                if (!Number.isFinite(v) || v < min || v > max) return;
-                f.val = v;
+            async persistConfig() {
+                try {
+                    const r = await fetch('/api/config', {
+                        method:  'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body:    JSON.stringify(this.buildConfig()),
+                    });
+                    const d = await r.json();
+                    if (d.error) {
+                        this.errorMsg = 'Fehler: ' + d.error;
+                        return false;
+                    }
+                    this.errorMsg = '';
+                    return true;
+                } catch (_) {
+                    this.errorMsg = 'Netzwerkfehler beim Speichern.';
+                    return false;
+                }
             },
 
-            acceptStr(f, maxLen) {
+            /* ----------------------------------------------------------------
+               Accept / reset helpers - accepting now persists immediately
+            ---------------------------------------------------------------- */
+            async acceptNum(f, min, max) {
+                const v = Number(f.draft);
+                if (!Number.isFinite(v) || v < min || v > max) return;
+                const prev = f.committed;
+                f.committed = v;
+                if (!await this.persistConfig()) f.committed = prev;
+            },
+
+            async acceptStr(f, maxLen) {
                 const v = f.draft.trim();
                 if (!v || v.length > maxLen) return;
-                f.val   = v;
-                f.draft = v;   // normalise whitespace in the box
+                const prev = f.committed;
+                f.committed = v;
+                f.draft     = v;   // normalise whitespace in the box
+                if (!await this.persistConfig()) { f.committed = prev; f.draft = prev; }
+            },
+
+            async acceptSelect(f) {
+                const v = Number(f.draft);
+                const prev = f.committed;
+                f.committed = v;
+                if (!await this.persistConfig()) f.committed = prev;
             },
 
             resetF(f) {
-                f.val   = f.orig;
-                f.draft = '' + f.orig;
+                f.draft = '' + f.committed;
             },
 
             /* ----------------------------------------------------------------
@@ -300,87 +362,72 @@
             },
 
             /* ----------------------------------------------------------------
-               Dynamic position management
+               Dynamic position management. positions[0] (ZU) and
+               positions[length-1] (AUF) are the fixed end-stops and are
+               never displaced - only intermediate positions are inserted
+               before AUF / removed from just before AUF.
             ---------------------------------------------------------------- */
-            addPos(hi) {
-                const h    = this.hatches[hi];
-                const last = h.positions.length
-                    ? h.positions[h.positions.length - 1].val
-                    : h.min.val;
-                h.positions.push(this.fld(last));
+            async addPos(hi) {
+                const h   = this.hatches[hi];
+                const n   = h.positions.length;
+                const idx = n - 1;  // insert directly before AUF
+                const aufVal    = h.positions[n - 1].committed;
+                const beforeVal = h.positions[n - 2].committed;  // last intermediate, or ZU
+                const mid = Math.round((beforeVal + aufVal) / 2);
+                h.positions.splice(idx, 0, this.fld(mid));
+                if (!await this.persistConfig()) h.positions.splice(idx, 1);
             },
 
-            removePos(hi) {
+            async removePos(hi) {
                 const h = this.hatches[hi];
-                if (h.positions.length > 2) h.positions.pop();
+                if (h.positions.length <= 2) return;
+                const idx = h.positions.length - 2;  // last intermediate position
+                const [removed] = h.positions.splice(idx, 1);
+                if (!await this.persistConfig()) h.positions.splice(idx, 0, removed);
             },
 
             /* ----------------------------------------------------------------
-               Test move: send accepted µs value to task_control via API
+               Test move: send accepted angle directly to task_control.
+               No apply step needed - accepted values are already persisted
+               and active in RAM by the time this can be clicked (the ▶
+               button is disabled while a draft is unaccepted).
             ---------------------------------------------------------------- */
-            async testMove(hi, hatch_us) {
-                // Push accepted config values to in-memory state before
-                // moving so the test reflects the current UI values
-                // without requiring a save and reboot.
-                await fetch('/api/config/apply', {
-                    method:  'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body:    JSON.stringify(this.buildConfig()),
-                });
+            testMove(hi, hatch_deg) {
                 fetch('/api/hatch/' + hi + '/test', {
                     method:  'POST',
                     headers: {'Content-Type': 'application/json'},
-                    body:    JSON.stringify({ hatch_us }),
+                    body:    JSON.stringify({ hatch_deg }),
                 });
             },
 
             /* ----------------------------------------------------------------
-               Collect accepted values into a config dict for POST
+               Collect committed values into a config dict for POST
             ---------------------------------------------------------------- */
             buildConfig() {
                 return {
                     global: {
-                        brake_open_us:                   this.g.brake_open_us.val,
-                        brake_close_us:                  this.g.brake_close_us.val,
-                        delay_after_brake_change_cmd_ms: this.g.delay_after_brake_change_cmd_ms.val,
-                        delay_after_move_ms:             this.g.delay_after_move_ms.val,
+                        hatch_servo: {
+                            range_deg:         this.hs.range_deg.committed,
+                            pulse_min_us:      this.hs.pulse_min_us.committed,
+                            pulse_max_us:      this.hs.pulse_max_us.committed,
+                            hard_stop_min_deg: this.hs.hard_stop_min_deg.committed,
+                            hard_stop_max_deg: this.hs.hard_stop_max_deg.committed,
+                            speed_deg_per_s:   this.hs.speed_deg_per_s.committed,
+                        },
+                        brake_servo: {
+                            range_deg:    this.bs.range_deg.committed,
+                            pulse_min_us: this.bs.pulse_min_us.committed,
+                            pulse_max_us: this.bs.pulse_max_us.committed,
+                        },
                     },
                     hatches: this.hatches.map(h => ({
-                        name:         h.name.val,
-                        short_name:   h.short_name.val,
-                        hatch_min_us: h.min.val,
-                        hatch_max_us: h.max.val,
-                        step_us:      h.step_us.val,
-                        step_ms:      h.step_ms.val,
-                        positions:    h.positions.map(p => ({ hatch_us: p.val })),
+                        name:            h.name.committed,
+                        short_name:      h.short_name.committed,
+                        brake_open_deg:  h.brake_open_deg.committed,
+                        brake_close_deg: h.brake_close_deg.committed,
+                        positions:       h.positions.map(p => ({ hatch_deg: p.committed })),
                     })),
                 };
-            },
-
-            /* ----------------------------------------------------------------
-               Save: POST config, then device restarts
-            ---------------------------------------------------------------- */
-            async save() {
-                this.saving  = true;
-                this.saveMsg = 'Wird gespeichert\u2026';
-                try {
-                    const r = await fetch('/api/config', {
-                        method:  'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body:    JSON.stringify(this.buildConfig()),
-                    });
-                    const d = await r.json();
-                    if (d.error) {
-                        this.saveMsg = 'Fehler: ' + d.error;
-                        this.saving  = false;
-                    } else {
-                        this.saveMsg = 'Gespeichert. Ger\u00e4t startet neu\u2026';
-                    }
-                } catch (_) {
-                    // Network error: device likely restarted – expected
-                    this.saveMsg = 'Ger\u00e4t startet neu. Bitte kurz warten\u2026';
-                    setTimeout(() => { window.location.href = '/'; }, 5000);
-                }
             },
 
             /* ----------------------------------------------------------------
@@ -390,26 +437,32 @@
                 fetch('/api/config')
                     .then(r => r.json())
                     .then(cfg => {
-                        const G  = cfg.global;
-                        this.g = {
-                            brake_open_us:                   this.fld(G.brake_open_us),
-                            brake_close_us:                  this.fld(G.brake_close_us),
-                            delay_after_brake_change_cmd_ms: this.fld(G.delay_after_brake_change_cmd_ms),
-                            delay_after_move_ms:             this.fld(G.delay_after_move_ms),
+                        const HS = cfg.global.hatch_servo;
+                        const BS = cfg.global.brake_servo;
+                        this.hs = {
+                            range_deg:         this.fld(HS.range_deg),
+                            pulse_min_us:      this.fld(HS.pulse_min_us),
+                            pulse_max_us:      this.fld(HS.pulse_max_us),
+                            hard_stop_min_deg: this.fld(HS.hard_stop_min_deg),
+                            hard_stop_max_deg: this.fld(HS.hard_stop_max_deg),
+                            speed_deg_per_s:   this.fld(HS.speed_deg_per_s),
+                        };
+                        this.bs = {
+                            range_deg:    this.fld(BS.range_deg),
+                            pulse_min_us: this.fld(BS.pulse_min_us),
+                            pulse_max_us: this.fld(BS.pulse_max_us),
                         };
                         this.hatches = cfg.hatches.map(h => ({
-                            name:       this.fld(h.name),
-                            short_name: this.fld(h.short_name),
-                            min:        this.fld(h.hatch_min_us),
-                            max:        this.fld(h.hatch_max_us),
-                            step_us:    this.fld(h.step_us),
-                            step_ms:    this.fld(h.step_ms),
-                            positions:  h.positions.map(p => this.fld(p.hatch_us)),
+                            name:            this.fld(h.name),
+                            short_name:      this.fld(h.short_name),
+                            brake_open_deg:  this.fld(h.brake_open_deg),
+                            brake_close_deg: this.fld(h.brake_close_deg),
+                            positions:       h.positions.map(p => this.fld(p.hatch_deg)),
                         }));
                         this.loaded = true;
                     })
                     .catch(() => {
-                        this.saveMsg = 'Konfiguration konnte nicht geladen werden.';
+                        this.errorMsg = 'Konfiguration konnte nicht geladen werden.';
                     });
             },
         };

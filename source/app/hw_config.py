@@ -41,7 +41,19 @@ PCA9685_FREQ_HZ = 50  # standard servo frequency
 # Extended:  500–2500 µs (conservative default covering most extended-range servos)
 SERVO_MIN_US = 500
 SERVO_MAX_US = 2500
-FAILSAFE_US  = -1    # sentinel: actual or target position unknown (fail-safe state)
+SERVO_RANGE_DEG_MAX = 270  # widest allowed value for global.*.range_deg (180 or 270);
+                            # used as an absolute sanity bound when validating
+                            # degree values in state.json independent of config.json
+FAILSAFE_DEG = -1    # sentinel: actual or target position unknown (fail-safe state)
+
+# Fixed drive-train direction: applies identically to hatch and brake
+# servos. See shared/servo_units.py for the conversion formula.
+SERVO_DIRECTION_REVERSED = True
+
+# Fixed step size for the hatch movement ramp (see task_control.py); the
+# desired speed (config: hatch_servo.speed_deg_per_s) is converted into a
+# step interval at this fixed step size.
+HATCH_STEP_US = 5
 
 # PCA9685 channel assignments
 # Each hatch uses two servos: hatch (movement) and brake (locking mechanism)

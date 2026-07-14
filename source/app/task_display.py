@@ -11,7 +11,7 @@
 import uasyncio
 import network
 from app import session
-from app.hw_config import FAILSAFE_US
+from app.hw_config import FAILSAFE_DEG
 
 # QR code support – uQR must be installed in /lib
 try:
@@ -26,10 +26,10 @@ _qr_cache_matrix = None  # cached matrix to avoid regenerating on every refresh
 _REFRESH_MS = 500  # display refresh interval in milliseconds
 
 
-def _find_pos_idx(hatch_us, positions):
-    """Return the index of hatch_us in the positions list, or None."""
+def _find_pos_idx(hatch_deg, positions):
+    """Return the index of hatch_deg in the positions list, or None."""
     for i, pos in enumerate(positions):
-        if pos["hatch_us"] == hatch_us:
+        if pos["hatch_deg"] == hatch_deg:
             return i
     return None
 
@@ -39,7 +39,7 @@ def _status_text(idx, state, targets, config):
 
     "BEWEGT"  – target differs from actual (moving or fail-safe recovery
                 in progress)
-    "?ZU?"    – actual and target are both FAILSAFE_US: hatch fell closed
+    "?ZU?"    – actual and target are both FAILSAFE_DEG: hatch fell closed
                 by gravity after a fail-safe sequence, position unverified
                 and unlocked
     "ZU"      – at first position (index 0, most closed)
@@ -48,15 +48,15 @@ def _status_text(idx, state, targets, config):
     "???"     – actual position not found in positions list (should not
                 occur in normal operation after fail-safe handling)
     """
-    if targets[idx]["hatch_us"] != state["hatches"][idx]["hatch_us"]:
+    if targets[idx]["hatch_deg"] != state["hatches"][idx]["hatch_deg"]:
         return "BEWEGT"
 
-    hatch_us  = state["hatches"][idx]["hatch_us"]
-    if hatch_us == FAILSAFE_US:
+    hatch_deg = state["hatches"][idx]["hatch_deg"]
+    if hatch_deg == FAILSAFE_DEG:
         return "?ZU?"
 
     positions = config["hatches"][idx]["positions"]
-    pos_idx   = _find_pos_idx(hatch_us, positions)
+    pos_idx   = _find_pos_idx(hatch_deg, positions)
 
     if pos_idx is None:
         return "???"

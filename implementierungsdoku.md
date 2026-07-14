@@ -159,7 +159,9 @@ roof_hatch_controller/
     ├── shared/
     │   ├── __init__.py
     │   ├── pca9685.py           # PCA9685-Treiber
-    │   └── grove_relay_4chn_spdt.py  # Grove Relay-Treiber
+    │   ├── grove_relay_4chn_spdt.py  # Grove Relay-Treiber
+    │   ├── json_utils.py        # pretty_json() für lesbare config.json-Ausgabe
+    │   └── servo_units.py       # Grad <-> µs Umrechnung (deg_to_us/us_to_deg)
     └── webpages/
         ├── index.html           # Bedienwebseite
         ├── config.html          # Konfigurationswebseite
@@ -253,21 +255,59 @@ curl -L https://cdn.jsdelivr.net/npm/alpinejs@3.14.1/dist/cdn.min.js -o alpine.m
 
 Muss vor dem ersten Start auf das Gerät kopiert werden (per `upload.sh` automatisch aus `source/config.json`). Startwerte sind Platzhalter – müssen über die Konfigurationswebseite auf die tatsächliche Hardware angepasst werden.
 
-**Felder global:**
+Alle Positionen, Hard-Stops und Geschwindigkeiten sind in **Grad** bzw. **Grad/s** angegeben, nicht in µs. Die Umrechnung nach µs für die PCA9685-Ansteuerung übernimmt `shared/servo_units.py` (`deg_to_us()`/`us_to_deg()`), ausschließlich innerhalb von `task_control.py`. Die Drehrichtung ist dabei softwareseitig fest umgekehrt (`SERVO_DIRECTION_REVERSED = True` in `hw_config.py`, gilt einheitlich für Luken- und Bremsservo, ist kein Konfigurationswert).
 
-- `brake_open_us` / `brake_close_us`: Bremsen-Servo-Positionen in µs (Auf- und Zu-Stellung), für alle Luken gleich
-- `delay_after_brake_change_cmd_ms`: Wartezeit nach jedem Bremsbefehl (Auf wie Zu) bis die Bremse ihre Zielstellung erreicht hat; gilt für beide Richtungen da die Fahrstrecke gleich ist
-- `delay_after_move_ms`: Wartezeit nach der letzten Schrittposition des Luken-Servos bevor die Bremse den Schließbefehl bekommt; gibt dem Servo Zeit zum Auschwingen
+```json
+{
+    "global": {
+        "hatch_servo": {
+            "range_deg": 270,
+            "pulse_min_us": 500,
+            "pulse_max_us": 2500,
+            "hard_stop_min_deg": 0,
+            "hard_stop_max_deg": 270,
+            "speed_deg_per_s": 30
+        },
+        "brake_servo": {
+            "range_deg": 180,
+            "pulse_min_us": 500,
+            "pulse_max_us": 2500
+        }
+    },
+    "hatches": [
+        {
+            "name": "Luke 1",
+            "short_name": "Luke1",
+            "brake_open_deg": 10,
+            "brake_close_deg": 170,
+            "positions": [{"hatch_deg": 0}, {"hatch_deg": 90}, {"hatch_deg": 260}]
+        }
+    ]
+}
+```
 
-**`config.json.template`** im `source/`-Verzeichnis dient als konservative Vorlage. `config_migration.py` nutzt sie beim Boot um fehlende oder umbenannte Felder automatisch zu ergänzen.
+**`global.hatch_servo`** – gilt einheitlich für alle 4 Lukenservos:
+
+- `range_deg`: Gesamtstellbereich des Servos, Umschaltwert 180 oder 270
+- `pulse_min_us` / `pulse_max_us`: Impulszeit-Grenzen in µs (üblicherweise 500/2500)
+- `hard_stop_min_deg` / `hard_stop_max_deg`: Hardstop-Grenzen in Grad – Software fährt nie außerhalb, gilt für alle 4 Luken gleich
+- `speed_deg_per_s`: Bewegungsgeschwindigkeit in Grad/s, einheitlich für alle 4 Luken. Wird in `task_control.py` zusammen mit der festen Schrittgröße `HATCH_STEP_US` (5 µs, Code-Konstante) in ein Schrittintervall umgerechnet (`_compute_step_ms()`)
+
+**`global.brake_servo`** – gilt einheitlich für alle 4 Bremsservos:
+
+- `range_deg`: Gesamtstellbereich, Umschaltwert 180 oder 270
+- `pulse_min_us` / `pulse_max_us`: Impulszeit-Grenzen in µs
+
+**`config.json.template`** im `source/`-Verzeichnis dient als konservative Vorlage. `config_migration.py` nutzt sie beim Boot um fehlende oder umbenannte Felder automatisch zu ergänzen (Merge-Mechanismus unverändert, verarbeitet die neuen verschachtelten Dicts bereits generisch).
 
 **Felder pro Luke:**
 
 - `name`: Anzeigename (Web-Interface)
 - `short_name`: max. 6 Zeichen für OLED-Display
-- `hatch_min_us` / `hatch_max_us`: Hardstop-Grenzen – Software fährt nie außerhalb
-- `step_us` / `step_ms`: Schrittgröße und Intervall für die Bewegungsrampe
-- `positions`: Liste von Rastpositionen `[{"hatch_us": N}, ...]`, min. 2
+- `brake_open_deg` / `brake_close_deg`: Bremsen-Servo-Winkel in Grad (Auf- und Zu-Stellung), individuell pro Luke kalibrierbar (anders als beim Lukenservo, da die Bremsmechanik pro Luke leicht unterschiedlich sitzen kann)
+- `positions`: Liste von Rastpositionen `[{"hatch_deg": N}, ...]`, min. 2. `positions[0]` ist immer der Zu-Endanschlag ("ZU"), `positions[-1]` immer der Auf-Endanschlag ("AUF") – diese beiden bleiben bei Einfügen/Entfernen von Zwischenpositionen stets an erster/letzter Stelle der Liste
+
+**Entfallen** (durch die Grad-Umstellung ersetzt bzw. nicht mehr web-konfigurierbar, siehe 9.11): `global.brake_open_us`/`brake_close_us`, `global.delay_after_brake_change_cmd_ms`/`delay_after_move_ms`, pro Luke `hatch_min_us`/`hatch_max_us`/`step_us`/`step_ms`.
 
 ### 7.2 `/wifi.json` – WLAN-Zugangsdaten
 
@@ -282,21 +322,23 @@ Wird über den AP-Modus geschrieben. Liegt im internen Flash, nicht auf SD. Nich
 ````json
 {
     "hatches": [
-        {"hatch_us": 600, "brake_us": 800, "target_us": 600},
-        {"hatch_us": 600, "brake_us": 800, "target_us": 600},
-        {"hatch_us": 600, "brake_us": 800, "target_us": 600},
-        {"hatch_us": 600, "brake_us": 800, "target_us": 600}
+        {"hatch_deg": 0, "brake_deg": 170, "target_deg": 0},
+        {"hatch_deg": 0, "brake_deg": 170, "target_deg": 0},
+        {"hatch_deg": 0, "brake_deg": 170, "target_deg": 0},
+        {"hatch_deg": 0, "brake_deg": 170, "target_deg": 0}
     ]
 }
 ````
 
-- `hatch_us`: Letzter bekannter Ist-Zustand des Luken-Servos in µs, oder `FAILSAFE_US` (-1) wenn die Position unbekannt ist (Fail-Safe-Zustand oder Stromausfall mitten in einer Fahrt).
-- `brake_us`: Letzter bekannter Ist-Zustand des Brems-Servos in µs. Immer ein echter µs-Wert, nie `FAILSAFE_US`.
-- `target_us`: Zuletzt befohlener Soll-Zustand in µs, oder `FAILSAFE_US` (-1) im passiven Fail-Safe-Ruhezustand. Persistiert damit ein Soll/Ist-Mismatch nach Stromausfall erkennbar bleibt und beim nächsten Boot automatisch abgearbeitet wird.
+Wie `config.json` durchgehend in Grad (nicht mehr µs). Umrechnung nach µs passiert nur lokal in `task_control.py` unmittelbar vor der PCA9685-Ansteuerung.
 
-Beim allerersten Start nicht vorhanden → `state.py` erzeugt Standardzustand aus `config.json` (alle Luken auf `hatch_min_us`, Bremse auf `brake_close_us`, Soll = Ist) und speichert ihn. Ein `state.json` ohne `target_us` (altes Format) wird ebenfalls als ungültig erkannt und neu erzeugt.
+- `hatch_deg`: Letzter bekannter Ist-Zustand des Luken-Servos in Grad, oder `FAILSAFE_DEG` (-1) wenn die Position unbekannt ist (Fail-Safe-Zustand oder Stromausfall mitten in einer Fahrt).
+- `brake_deg`: Letzter bekannter Ist-Zustand des Brems-Servos in Grad. Immer ein echter Winkel, nie `FAILSAFE_DEG`.
+- `target_deg`: Zuletzt befohlener Soll-Zustand in Grad, oder `FAILSAFE_DEG` (-1) im passiven Fail-Safe-Ruhezustand. Persistiert damit ein Soll/Ist-Mismatch nach Stromausfall erkennbar bleibt und beim nächsten Boot automatisch abgearbeitet wird.
 
-**Wichtig:** Vor jedem Relais-Ein werden die Ist-Positionen an PCA9685 ausgegeben. Bei `FAILSAFE_US` werden Fallback-Werte verwendet (`positions[0]` für Luken-Servo, `brake_open_us` für Brems-Servo), damit kein Ruck entsteht.
+Beim allerersten Start nicht vorhanden → `state.py` erzeugt Standardzustand aus `config.json` (alle Luken auf `hard_stop_min_deg`, Bremse auf die jeweilige `brake_close_deg` der Luke, Soll = Ist) und speichert ihn. Ein `state.json` ohne `target_deg` (altes Format, auch das frühere µs-basierte Schema) wird ebenfalls als ungültig erkannt und neu erzeugt.
+
+**Wichtig:** Vor jedem Relais-Ein werden die Ist-Positionen an PCA9685 ausgegeben. Bei `FAILSAFE_DEG` werden Fallback-Werte verwendet (`positions[0]` für Luken-Servo, `brake_open_deg` der jeweiligen Luke für Brems-Servo), damit kein Ruck entsteht.
 
 ---
 
@@ -318,7 +360,7 @@ Stage 2b: config.json laden (load_config)
           → Fehler → Anzeige auf OLED + return
           state.json laden (load_state)
           → Fehler → create_default_state() + save_state()
-          Bei WDT-Reset: alle Luken in state auf FAILSAFE_US (-1) setzen
+          Bei WDT-Reset: alle Luken in state auf FAILSAFE_DEG (-1) setzen
           + save_state() (physische Fail-Safe-Fahrt war bereits Stage 0)
 
 Stage 3:  WLAN
@@ -326,7 +368,7 @@ Stage 3:  WLAN
           → boot.AP_MODE=False: start_client_mode()
 
 Stage 4:  targets-Dict aus persistiertem Soll aufbauen
-          → targets = [{"hatch_us": h["target_us"]} for h in state["hatches"]]
+          → targets = [{"hatch_deg": h["target_deg"]} for h in state["hatches"]]
 
 Stage 5:  uasyncio.gather() – alle Tasks starten:
           task_watchdog, task_display, task_control,
@@ -364,13 +406,32 @@ BTN_CONFIG_SESSION_MS = 3_600_000 # 1h Session
 PCA9685_FREQ_HZ = 50
 SERVO_MIN_US = 500
 SERVO_MAX_US = 2500
-FAILSAFE_US  = -1    # Sentinel: Position unbekannt (Fail-Safe-Zustand)
+SERVO_RANGE_DEG_MAX = 270  # obere Sanity-Grenze für Grad-Werte in state.json,
+                            # unabhängig vom konfigurierten range_deg (180/270)
+SERVO_DIRECTION_REVERSED = True  # fest, gilt einheitlich für Luken- UND Bremsservo
+HATCH_STEP_US = 5    # feste Schrittgröße der Bewegungsrampe (µs); die
+                      # konfigurierte Geschwindigkeit (speed_deg_per_s)
+                      # bestimmt nur das Schrittintervall, nicht die Schrittgröße
+FAILSAFE_DEG = -1    # Sentinel: Position unbekannt (Fail-Safe-Zustand)
 NUM_HATCHES  = 4
 BRAKE_TRAVEL_MS        = 500   # Wartezeit für Bremsen-Servo im Fail-Safe
-BRAKE_OPEN_US_FAILSAFE = 1200  # Fallback-Wert ohne config.json
+BRAKE_OPEN_US_FAILSAFE = 1200  # Fallback-Wert ohne config.json (roher µs-Wert,
+                                # unabhängig von der Grad-Konfiguration –
+                                # failsafe.py braucht kein lesbares config.json)
 PCA9685_CH = {0:(0,1), 1:(2,3), 2:(4,5), 3:(6,7)}
 RELAY_CH   = {0:0, 1:1, 2:2, 3:3}
 ```
+
+### 9.2b `shared/servo_units.py`
+
+Reine Umrechnungsmathematik, kein Hardware-Import, daher überall importierbar:
+
+```python
+deg_to_us(deg, pulse_min_us, pulse_max_us, range_deg)  # -> int µs
+us_to_deg(us, pulse_min_us, pulse_max_us, range_deg)   # -> float Grad
+```
+
+Berücksichtigt intern `SERVO_DIRECTION_REVERSED` aus `hw_config.py`. Wird ausschließlich in `task_control.py` verwendet, um die in Grad gehaltene Konfiguration/den Zustand unmittelbar vor der PCA9685-Ansteuerung nach µs umzurechnen.
 
 ### 9.3 `shared/pca9685.py`
 
@@ -446,15 +507,17 @@ create_default_state(cfg)  # erzeugt sicheren Anfangszustand aus config
 
 **Validierung config.json:**
 
-- Alle Required-Keys vorhanden
-- Servo-µs-Werte innerhalb [SERVO_MIN_US, SERVO_MAX_US]
-- `hatch_min_us < hatch_max_us`
-- Positionen innerhalb Hardstop-Grenzen
+- Alle Required-Keys vorhanden, inklusive der verschachtelten `global.hatch_servo`/`global.brake_servo`-Blöcke
+- `range_deg` beider Servotypen ∈ {180, 270}
+- `pulse_min_us < pulse_max_us`, beide innerhalb [SERVO_MIN_US, SERVO_MAX_US] (absolute Hardwaregrenze, unabhängig vom konfigurierten `range_deg`)
+- `hard_stop_min_deg < hard_stop_max_deg`, beide innerhalb [0, hatch_servo.range_deg]
+- `speed_deg_per_s > 0`
+- Pro Luke: `brake_open_deg`/`brake_close_deg` innerhalb [0, brake_servo.range_deg]; mindestens 2 Positionen; jede `positions[].hatch_deg` innerhalb [hard_stop_min_deg, hard_stop_max_deg]
 - Exakt NUM_HATCHES Einträge
 
-`hatch_us` und `target_us` dürfen `FAILSAFE_US` (-1) enthalten; in diesem Fall wird der Range-Check für das jeweilige Feld übersprungen. `brake_us` ist immer ein echter µs-Wert und wird immer geprüft.
+`hatch_deg` und `target_deg` in `state.json` dürfen `FAILSAFE_DEG` (-1) enthalten; in diesem Fall wird der Range-Check für das jeweilige Feld übersprungen. `brake_deg` ist immer ein echter Winkel und wird immer geprüft (Sanity-Grenze [0, SERVO_RANGE_DEG_MAX], unabhängig von `config.json`, siehe 9.2).
 
-**Erstes Startup / veraltetes Format:** `load_state()` wirft `StateError` → `create_default_state(config)` + `save_state()`. Ein `state.json` ohne `target_us` wird ebenfalls als ungültig erkannt und löst denselben Pfad aus.
+**Erstes Startup / veraltetes Format:** `load_state()` wirft `StateError` → `create_default_state(config)` + `save_state()`. Ein `state.json` ohne `target_deg` (auch das alte µs-basierte Format) wird ebenfalls als ungültig erkannt und löst denselben Pfad aus.
 
 ### 9.7 `app/failsafe.py`
 
@@ -524,43 +587,53 @@ if machine.reset_cause() == machine.WDT_RESET:
 
 ### 9.11 `app/task_control.py`
 
-Herzstück der Anwendung. Vergleicht `targets[i]["hatch_us"]` mit `state["hatches"][i]["hatch_us"]` für alle 4 Luken sequenziell.
+Herzstück der Anwendung. Vergleicht `targets[i]["hatch_deg"]` mit `state["hatches"][i]["hatch_deg"]` für alle 4 Luken sequenziell. `config`, `state` und `targets` sind durchgehend in Grad; die Umrechnung nach µs (`shared/servo_units.py`, `deg_to_us()`) passiert ausschließlich lokal zu Beginn von `_move_hatch`, unmittelbar vor der Ansteuerung.
 
 **Bewegungssequenz (`_move_hatch`):**
 
 | Schritt | Was passiert |
 |---|---|
-| `step_mark_failsafe` | `hatch_us` auf `FAILSAFE_US` setzen und persistieren → bei Stromausfall bleibt der Sentinel in `state.json`; nächster Boot setzt die Fahrt fort |
-| `step_preset_servos` | Brems-Servo auf `brake_open_us`; Luken-Servo auf **0µs** (kein gültiges PWM-Signal), damit der Servo-Controller beim Einschalten keine Mittelstellungsfahrt macht |
+| `step_mark_failsafe` | `hatch_deg` auf `FAILSAFE_DEG` setzen und persistieren → bei Stromausfall bleibt der Sentinel in `state.json`; nächster Boot setzt die Fahrt fort |
+| `step_preset_servos` | Brems-Servo auf `brake_open_deg` **dieser Luke** (in µs umgerechnet); Luken-Servo auf **0µs** (kein gültiges PWM-Signal), damit der Servo-Controller beim Einschalten keine Mittelstellungsfahrt macht |
 | `step_relay_on` | Relais ein → Servos bestromt; Bremse beginnt sofort zu öffnen |
 | `step_preset_delay` | `_PRESET_DELAY_MS` warten damit der Servo-Controller bootet bevor das erste gültige PWM-Signal gesetzt wird; 0 = deaktiviert |
 | `step_wiggle` | Luken-Servo für `_WIGGLE_CYCLES` Zyklen um ±`_WIGGLE_US` alternieren – bricht ein verbliebenes Zucken ab; 0 = deaktiviert |
-| `step_open_brake` | `delay_after_brake_change_cmd_ms` warten bis Bremse vollständig offen |
-| `step_move_hatch` | Luken-Servo schrittweise zur Zielposition (`step_us` pro Schritt, `step_ms` Pause); Startpunkt bei `FAILSAFE_US`-Ist: `positions[0]` |
-| `step_wait_hatch_settle` | `delay_after_move_ms` warten bis Luke zur Ruhe kommt bevor Bremse schließt |
-| `step_close_brake` | Brems-Servo → `brake_close_us`, dann `delay_after_brake_change_cmd_ms` warten |
+| (Wartezeit `_RELAY_ON_TO_BRAKE_OPEN_MS`) | Zeit ab Relais-Ein bis Bremse vollständig offen |
+| (Wartezeit `_BRAKE_OPEN_TO_HATCH_MOVE_MS`) | zusätzlicher Sicherheitspuffer bevor die Lukenbewegung beginnt |
+| `step_move_hatch` | Luken-Servo schrittweise zur Zielposition (feste Schrittgröße `HATCH_STEP_US` = 5µs, Intervall `step_ms` aus `speed_deg_per_s` berechnet – siehe `_compute_step_ms()`); Startpunkt bei `FAILSAFE_DEG`-Ist: `positions[0]` |
+| (Wartezeit `_HATCH_SETTLE_TO_BRAKE_CLOSE_MS`) | Zeit ab Zielposition erreicht bis Bremse den Schließbefehl bekommt |
+| `step_close_brake` | Brems-Servo → `brake_close_deg` **dieser Luke** |
+| (Wartezeit `_BRAKE_CLOSE_TO_RELAY_OFF_MS`) | Zeit ab Bremse-Schließbefehl bis Relais aus |
 | `step_relay_off` | Relais aus (immer, im `finally`-Block) |
-| `step_update_state` | `state` aktualisieren (`hatch_us`, `brake_us`, `target_us`) + `save_state()` |
+| `step_update_state` | `state` aktualisieren (`hatch_deg`, `brake_deg`, `target_deg`) + `save_state()` |
 
-**Modul-Konstanten** (direkt oben in `task_control.py` anpassbar):
+**Modul-Konstanten** (direkt oben in `task_control.py` anpassbar, nicht in `config.json`, nicht web-konfigurierbar):
 
-| Konstante | Startwert | Bedeutung |
+| Konstante | Wert | Bedeutung |
 |---|---|---|
 | `_WIGGLE_US` | 10 | Amplitude des Servo-Wackelns in µs |
-| `_WIGGLE_CYCLES` | 3 | Anzahl ±-Zyklen; 0 = deaktiviert |
-| `_PRESET_DELAY_MS` | 100 | Wartezeit nach Relay-Ein vor erstem PWM; 0 = deaktiviert |
+| `_WIGGLE_CYCLES` | 5 | Anzahl ±-Zyklen; 0 = deaktiviert |
+| `_PRESET_DELAY_MS` | 250 | Wartezeit nach Relay-Ein vor erstem PWM; 0 = deaktiviert |
+| `_RELAY_ON_TO_BRAKE_OPEN_MS` | 200 | Relais-Ein bis Bremse vollständig offen |
+| `_BRAKE_OPEN_TO_HATCH_MOVE_MS` | 400 | zusätzlicher Puffer bis Bewegungsbeginn |
+| `_HATCH_SETTLE_TO_BRAKE_CLOSE_MS` | 200 | Zielposition erreicht bis Bremse schließt |
+| `_BRAKE_CLOSE_TO_RELAY_OFF_MS` | 500 | Bremse-Schließbefehl bis Relais aus |
 
-**Hardstop-Enforcement:** Zielwert wird vor der Sequenz auf `[hatch_min_us, hatch_max_us]` geclampt und zurück in `targets` geschrieben.
+`HATCH_STEP_US` (fest 5µs) liegt in `hw_config.py`, da es dort mit den übrigen Hardware-Konstanten importierbar ist (siehe 9.2).
+
+**Geschwindigkeit → Schrittintervall** (`_compute_step_ms()`): berechnet aus `hatch_servo.speed_deg_per_s` und dem µs-pro-Grad-Verhältnis des Lukenservos das Schrittintervall in ms, bei fester Schrittgröße `HATCH_STEP_US`. Wird bei jedem `_move_hatch`-Aufruf neu berechnet, sodass eine Geschwindigkeitsänderung sofort wirkt.
+
+**Hardstop-Enforcement:** Zielwert wird vor der Sequenz auf `[hard_stop_min_deg, hard_stop_max_deg]` (global, einheitlich für alle 4 Luken) geclampt und zurück in `targets` geschrieben.
 
 **Fehlerbehandlung:** Exceptions aus `_move_hatch` werden in `task_control` gefangen, auf der seriellen Konsole geloggt, der Loop fährt mit der nächsten Luke fort. Das Relais ist durch den `finally`-Block immer sicher aus. Unerwartete, nicht gefangene Exceptions reißen den Event-Loop mit → WDT-Reset → Fail-Safe.
 
 **`targets`-Dict:** Beim Start aus dem persistierten Soll aufgebaut:
 
 ````python
-targets = [{"hatch_us": h["target_us"]} for h in state["hatches"]]
+targets = [{"hatch_deg": h["target_deg"]} for h in state["hatches"]]
 ````
 
-Setzen von `targets[i]["hatch_us"]` durch `task_webserver` (mit sofortiger `save_state`-Persistenz) löst die Bewegung aus. Wenn Soll == Ist → nichts passiert.
+Setzen von `targets[i]["hatch_deg"]` durch `task_webserver` (mit sofortiger `save_state`-Persistenz) löst die Bewegung aus. Wenn Soll == Ist → nichts passiert.
 
 ### 9.12 `app/task_button.py`
 
@@ -599,7 +672,7 @@ Zeile 5: "CFG AKTIV" / "CFG BEREIT" (wenn Session/Unlock aktiv)
 Zeile 6–7: reserviert
 ```
 
-Status-Werte: `"BEWEGT"` (target≠actual, auch während Fail-Safe-Wiederherstellung), `"?ZU?"` (Ist == Soll == `FAILSAFE_US`: schwerkraftbedingt zugefallen, unverriegelt), `"ZU"` (pos_idx=0), `"AUF"` (letzter Index), `"P2"…"P5"` (Zwischenpositionen), `"???"` (Position nicht in Positionsliste – sollte im Normalbetrieb nicht mehr auftreten).
+Status-Werte: `"BEWEGT"` (target≠actual, auch während Fail-Safe-Wiederherstellung), `"?ZU?"` (Ist == Soll == `FAILSAFE_DEG`: schwerkraftbedingt zugefallen, unverriegelt), `"ZU"` (pos_idx=0), `"AUF"` (letzter Index), `"P2"…"P5"` (Zwischenpositionen), `"???"` (Position nicht in Positionsliste – sollte im Normalbetrieb nicht mehr auftreten).
 
 **QR-Modus** (`session.is_qr_active()` = True, ausgelöst durch kurzen Tastendruck):
 
@@ -626,11 +699,12 @@ microdot-Webserver auf Port 80. Modulvariablen `_hw`, `_config`, `_state`, `_tar
 | GET     | `/sse`                | SSE-Stream, alle 500ms                         |
 | GET     | `/api/config`         | aktuelle`config.json` als JSON                 |
 | POST    | `/api/hatch/<i>/pos`  | Sollwert setzen`{position_idx: N}`             |
-| POST    | `/api/hatch/<i>/test` | Direktanfahren`{hatch_us: N}` (Session nötig) |
-| POST    | `/api/config`         | Neue Config validieren + speichern + Reset     |
-| POST    | `/api/config/apply`   | Config im RAM aktualisieren ohne Persistenz; für Testfahrten auf der Konfigurationsseite damit Timing-Änderungen sofort wirken ohne Neustart (Session nötig) |
+| POST    | `/api/hatch/<i>/test` | Direktanfahren`{hatch_deg: N}` (Session nötig) |
+| POST    | `/api/config`         | Neue Config validieren, sofort persistieren + im RAM anwenden – **kein Reset mehr**; wird bei jeder einzelnen Feld-Übernahme sowie bei jedem Positions-Einfügen/-Entfernen erneut mit dem kompletten aktuellen Dokument aufgerufen (Session nötig) |
 | POST    | `/api/wifi`           | WLAN-Daten speichern + Reset                   |
 | GET     | `/api/wifi/scan`      | WLAN-Scan → JSON`{networks: [{ssid, rssi}]}`  |
+
+`POST /api/config/apply` **entfällt ersatzlos** – seine Funktion (In-RAM-Update ohne Reset) ist jetzt fester Bestandteil von `POST /api/config`.
 
 **SSE-Implementierung:** Der `/sse`-Stream verwendet eine klassenbasierte `_SseStream`-Klasse statt eines async-Generators, da MicroPython bei async-Generatoren mit gleichzeitigem `yield` und `await` einen `TypeError` im microdot-Write-Pfad wirft (zweite Iteration liefert kein Bytes-Objekt). Die Klasse implementiert das `__aiter__`/`__anext__`-Protokoll explizit.
 
@@ -645,8 +719,8 @@ microdot-Webserver auf Port 80. Modulvariablen `_hw`, `_config`, `_state`, `_tar
 ```json
 {
   "hatches": [
-    {"name": "Luke 1", "short_name": "Luke1", "current_us": 600,
-     "target_us": 600, "moving": false, "failsafe": false,
+    {"name": "Luke 1", "short_name": "Luke1", "current_deg": 0,
+     "target_deg": 0, "moving": false, "failsafe": false,
      "pos_idx": 0, "num_positions": 3}
   ],
 ```
@@ -701,21 +775,21 @@ Merge ist rekursiv für verschachtelte Dicts. `hatches`-Liste wird immer als 4 E
 
 - Alpine.js `configApp()` Komponente
 - Lädt Config via `GET /api/config` beim Seitenstart
-- Bootstrap Accordion: Globale Einstellungen + 4 Luken-Sektionen
+- Bootstrap Accordion: Globale Einstellungen (Lukenservo + Bremsservo) + 4 Luken-Sektionen
+- **Kein Sammel-Speichern-Button mehr** (weder oben noch unten) – jedes Feld persistiert einzeln und sofort bei ✓
 
-**Feldzustände:**
+**Feldzustände** (nur noch zwei statt drei, da Übernahme sofort persistiert):
 
-- `draft !== val` → gelb (`field-edited`) – getippt, nicht übernommen
-- `val !== orig` → blau (`field-accepted`) – übernommen, nicht gespeichert
-- sonst → weiß
+- `draft !== committed` → gelb (`field-edited`) – getippt, noch nicht übernommen
+- sonst → weiß (übernommen = bereits dauerhaft gespeichert)
 
-**Interaktion pro Feld:** ↺ (Zurücksetzen auf `orig`), Eingabefeld, ✓ (Übernehmen → Validierung → `val = parsed`)
+**Interaktion pro Feld:** ↺ (Zurücksetzen auf `committed`), Eingabefeld, ✓ (Übernehmen → lokale Validierung → komplettes aktuelles Dokument per `POST /api/config` senden → bei Erfolg `committed = draft`, bei Fehler Rollback + Fehlermeldung).
 
-**Anfahren-Button (▶):** nur aktiv wenn `draft === val` (d.h. Wert übernommen) → sendet `POST /api/hatch/<i>/test`. Führt die vollständige Bewegungssequenz aus (Bremse auf/zu via `task_control`).
+**Anfahren-Button (▶):** nur aktiv wenn `draft === committed` (d.h. Wert bereits übernommen und persistiert) → sendet direkt `POST /api/hatch/<i>/test` mit `{hatch_deg}`, **ohne** vorherigen Apply-Schritt (entfällt, da der Wert durch ✓ schon aktiv ist). Führt die vollständige Bewegungssequenz aus (Bremse auf/zu via `task_control`).
 
-**Speichern:** Sendet alle `val`-Werte als JSON an `POST /api/config` → Validierung server-seitig → Schreiben → `machine.reset()`. Fetch-Fehler = Gerät hat neu gestartet → Redirect nach `/` nach 5s.
+**Persistenz (`persistConfig()`):** Baut das komplette aktuelle Konfigurationsdokument aus allen `committed`-Werten (`buildConfig()`) und sendet es per `POST /api/config`. Kein Reset, keine Weiterleitung – die Antwort kommt synchron zurück, bei Fehler wird der zuvor geänderte Wert lokal zurückgerollt und eine Fehlermeldung angezeigt.
 
-**Positionen:** Dynamisch hinzufügen/entfernen (min. 2). Neuer Eintrag wird mit dem letzten `val` vorbelegt.
+**Positionen:** `positions[0]` (ZU) und `positions[length-1]` (AUF) sind feste Randwerte und werden nie verschoben. Eine neue Zwischenposition wird immer unmittelbar **vor AUF** eingefügt, Default-Wert = Mittelwert aus AUF und der bisher letzten Zwischenposition (bzw. aus AUF und ZU, falls noch keine Zwischenposition existiert). Entfernen löscht die jeweils letzte Zwischenposition (Index `length-2`), nie ZU oder AUF selbst. Beides sofort persistiert (kein zusätzlicher ✓-Klick).
 
 ### 10.3 `ap_setup.html` – WLAN-Konfiguration
 
@@ -783,7 +857,7 @@ Hintergrund: kooperatives Multitasking ohne Prioritäten. Blockierender Code ohn
 **Warum ruckt der Luken-Servo im Fail-Safe nicht?**
 `fail_safe_close_all` setzt ausschließlich den Brems-Kanal auf einen gültigen PWM-Wert. Der **Luken-Kanal bleibt auf 0µs** – kein gültiger Puls. Der Servo-Controller erkennt das fehlende Signal und aktiviert seinen Motor nicht. Dieses Verhalten wird in der normalen Bewegungssequenz bewusst nachgebildet: `step_preset_servos` setzt den Luken-Kanal auf 0µs vor dem Relay-Ein, `step_preset_delay` gibt dem Controller-Bootvorgang Zeit bevor das erste gültige Signal kommt.
 
-Nach Fail-Safe (WDT-Reset): normaler Startablauf wird fortgesetzt. In Stage 2b werden alle Luken in `state.json` auf `FAILSAFE_US` (-1) gesetzt – Soll und Ist stimmen damit mit der physischen Realität überein. `task_control` bleibt danach passiv (Soll == Ist == `FAILSAFE_US`). Erst ein neuer Nutzerbefehl (echte µs-Position) löst die vollständige Bewegungssequenz inkl. Verriegelung aus.
+Nach Fail-Safe (WDT-Reset): normaler Startablauf wird fortgesetzt. In Stage 2b werden alle Luken in `state.json` auf `FAILSAFE_DEG` (-1) gesetzt – Soll und Ist stimmen damit mit der physischen Realität überein. `task_control` bleibt danach passiv (Soll == Ist == `FAILSAFE_DEG`). Erst ein neuer Nutzerbefehl (echte Grad-Position) löst die vollständige Bewegungssequenz inkl. Verriegelung aus.
 
 ---
 
@@ -899,7 +973,7 @@ PCF8563 auf Expansion Board bereits vorhanden (I²C 0x51). Automatisches Öffnen
 Für alle Erweiterungen ist eine saubere Abstraktionsschicht geplant:
 
 - Trigger-Quellen: Web-UI, lokale Taster, Regensensor, RTC
-- Aktion: `targets[i]["hatch_us"] = neue_position_us`
+- Aktion: `targets[i]["hatch_deg"] = neue_position_deg`
 - Neue Quellen ohne Umbau der Kernlogik ergänzbar
 
 ---

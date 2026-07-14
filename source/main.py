@@ -127,7 +127,7 @@ async def main():
     # ------------------------------------------------------------------
     # Stage 2b: Load config and state
     # ------------------------------------------------------------------
-    from app.hw_config import FAILSAFE_US
+    from app.hw_config import FAILSAFE_DEG
     from app.state import (load_config, load_state, save_state,
                            create_default_state, ConfigError, StateError)
     from app.config_migration import migrate_config, ConfigMigrationError
@@ -149,11 +149,11 @@ async def main():
 
     if wdt_reset:
         # Physical fail-safe has already run in Stage 0. Now mark all
-        # hatches as FAILSAFE_US so state.json matches the physical
+        # hatches as FAILSAFE_DEG so state.json matches the physical
         # reality: positions are unknown, hatches are unlocked.
         for h in state["hatches"]:
-            h["hatch_us"]  = FAILSAFE_US
-            h["target_us"] = FAILSAFE_US
+            h["hatch_deg"]  = FAILSAFE_DEG
+            h["target_deg"] = FAILSAFE_DEG
         save_state(state)
 
     # ------------------------------------------------------------------
@@ -165,7 +165,7 @@ async def main():
     # ------------------------------------------------------------------
     # Stage 4: Launch async tasks
     # ------------------------------------------------------------------
-    targets = [{"hatch_us": h["target_us"]} for h in state["hatches"]]
+    targets = [{"hatch_deg": h["target_deg"]} for h in state["hatches"]]
     _boot_status(display, 6, "Starting...")
     await uasyncio.gather(
         task_watchdog(),
