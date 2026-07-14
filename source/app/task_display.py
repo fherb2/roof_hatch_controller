@@ -2,18 +2,28 @@
 #
 # Refreshes the display every _REFRESH_MS milliseconds.
 #
-# Display layout (128x64, 8 lines of 16 chars each):
-#   Line 0–3: hatch status  "<short_name> <status>"
-#   Line 4:   Wi-Fi status / IP address
-#   Line 5:   config session hint (if active or unlock window open)
-#   Line 6–7: reserved for future use
+# Normal display layout (128x64, 4 hatch status lines using a larger
+# 14px-high monospace font via the Writer class - see lib/writer.py and
+# lib/font_hatch_status.py):
+#   Line 0-3: hatch status "<short_name> <status>", 16px pitch each,
+#             filling the full 64px height. No Wi-Fi/IP line and no
+#             config-session hint are shown here anymore - the Wi-Fi
+#             status is only relevant when scanning the QR code (see
+#             below), and the config session state is now shown
+#             immediately and exclusively on the web page itself.
+#
+# QR-code layout (shown for 15s after a short button press):
+#   Top 48px:    QR code (scale 1px/module, 4px quiet zone)
+#   Bottom 16px: IP address as plain text, standard 8px built-in font
 
 import uasyncio
 import network
 from app import session
 from app.hw_config import FAILSAFE_DEG
+from writer import Writer
+import font_hatch_status
 
-# QR code support – uQR must be installed in /lib
+# QR code support - uQR must be installed in /lib
 try:
     from uQR import QRCode as _QRCode
     _QR_AVAILABLE = True
@@ -23,7 +33,9 @@ except ImportError:
 _qr_cache_url    = None  # URL for which the matrix was generated
 _qr_cache_matrix = None  # cached matrix to avoid regenerating on every refresh
 
-_REFRESH_MS = 500  # display refresh interval in milliseconds
+_REFRESH_MS     = 500  # display refresh interval in milliseconds
+_LINE_HEIGHT_PX = 16   # px per hatch status line; 4 lines exactly fill 64px
+_IP_LINE_PX     = 16   # px reserved at the bottom of the QR screen for the IP text
 
 
 def _find_pos_idx(hatch_deg, positions):
@@ -37,15 +49,15 @@ def _find_pos_idx(hatch_deg, positions):
 def _status_text(idx, state, targets, config):
     """Return a status string (max 9 chars) for hatch idx.
 
-    "BEWEGT"  – target differs from actual (moving or fail-safe recovery
+    "BEWEGT"  - target differs from actual (moving or fail-safe recovery
                 in progress)
-    "?ZU?"    – actual and target are both FAILSAFE_DEG: hatch fell closed
+    "?ZU?"    - actual and target are both FAILSAFE_DEG: hatch fell closed
                 by gravity after a fail-safe sequence, position unverified
                 and unlocked
-    "ZU"      – at first position (index 0, most closed)
-    "AUF"     – at last position (most open)
-    "P{n}"    – at intermediate position n (1-based, P2 … P(n-1))
-    "???"     – actual position not found in positions list (should not
+    "ZU"      - at first position (index 0, most closed)
+    "AUF"     - at last position (most open)
+    "P{n}"    - at intermediate position n (1-based, P2 ... P(n-1))
+    "???"     - actual position not found in positions list (should not
                 occur in normal operation after fail-safe handling)
     """
     if targets[idx]["hatch_deg"] != state["hatches"][idx]["hatch_deg"]:
@@ -64,27 +76,31 @@ def _status_text(idx, state, targets, config):
         return "ZU"
     if pos_idx == len(positions) - 1:
         return "AUF"
-    return f"P{pos_idx + 1}"  # 1-based, P2 … P(n-1) for intermediate
+    return f"P{pos_idx + 1}"  # 1-based, P2 ... P(n-1) for intermediate
 
 
-def _wifi_line():
-    """Return a 16-char Wi-Fi status string."""
+def _current_ip():
+    """Return the current IP address as a plain string, or None if no
+    Wi-Fi connection is active (neither client mode nor AP mode)."""
     sta = network.WLAN(network.STA_IF)
     if sta.isconnected():
-        return sta.ifconfig()[0][:16]          # IP address
+        return sta.ifconfig()[0]
 
     ap = network.WLAN(network.AP_IF)
     if ap.active():
-        return ("AP:" + ap.ifconfig()[0])[:16] # AP mode IP
+        return ap.ifconfig()[0]
 
-    return "Kein WLAN"
+    return None
 
 
 def _render_qr(display):
-    """Render the current Wi-Fi IP as a QR code on the display.
+    """Render the current Wi-Fi IP as a QR code, with the IP address as
+    plain text underneath.
 
-    White background, black QR modules. Matrix is cached until the URL
-    changes to avoid regenerating on every 500 ms refresh cycle.
+    White background, black QR modules. The QR code is confined to the
+    top 48px so the bottom _IP_LINE_PX px remain free for the IP address
+    text. Matrix is cached until the URL changes to avoid regenerating
+    on every 500 ms refresh cycle.
     """
     global _qr_cache_url, _qr_cache_matrix
 
@@ -94,13 +110,10 @@ def _render_qr(display):
         display.show()
         return
 
-    # Determine current URL
-    sta = network.WLAN(network.STA_IF)
-    if sta.isconnected():
-        url = "http://" + sta.ifconfig()[0]
-    else:
-        ap = network.WLAN(network.AP_IF)
-        url = "http://" + (ap.ifconfig()[0] if ap.active() else "0.0.0.0")
+    ip       = _current_ip()
+    url      = "http://" + (ip if ip else "0.0.0.0")
+    ip_text  = ip if ip else "Kein WLAN"
+    qr_area_height = 64 - _IP_LINE_PX
 
     # Regenerate matrix only when URL changes
     if url != _qr_cache_url:
@@ -114,7 +127,7 @@ def _render_qr(display):
     QUIET  = 4  # quiet zone in pixels (required for scanners)
 
     offset_x = (128 - size - 2 * QUIET) // 2
-    offset_y = (64  - size - 2 * QUIET) // 2
+    offset_y = (qr_area_height - size - 2 * QUIET) // 2
 
     display.fill(1)  # white background (quiet zone + white modules)
     for my in range(size):
@@ -122,33 +135,35 @@ def _render_qr(display):
             if matrix[my][mx]:  # True = black module
                 x = offset_x + QUIET + mx
                 y = offset_y + QUIET + my
-                if 0 <= x < 128 and 0 <= y < 64:
+                if 0 <= x < 128 and 0 <= y < qr_area_height:
                     display.pixel(x, y, 0)
+
+    # IP address line beneath the QR code, standard built-in 8px font,
+    # black text on the white background, horizontally centred
+    text_x = max(0, (128 - len(ip_text) * 8) // 2)
+    text_y = qr_area_height + (_IP_LINE_PX - 8) // 2
+    display.text(ip_text, text_x, text_y, 0)
+
     display.show()
 
 
-def _refresh(display, config, state, targets):
-    """Redraw the entire display."""
-    display.fill(0)
+def _refresh(wri, config, state, targets):
+    """Redraw the entire display: one larger-font status line per hatch.
 
-    # Lines 0–3: one line per hatch
+    Args:
+        wri: Writer instance bound to the display and font_hatch_status,
+             created once in task_display() and reused on every refresh.
+    """
+    wri.device.fill(0)
+
     for i in range(len(targets)):
         short  = config["hatches"][i]["short_name"][:6]
         status = _status_text(i, state, targets, config)
-        # Format: "SSSSSS STATUS   " – exactly 16 chars
-        line   = f"{short:<6} {status:<9}"
-        display.text(line[:16], 0, i * 8)
+        line   = f"{short:<6} {status}"
+        Writer.set_textpos(wri.device, i * _LINE_HEIGHT_PX, 0)
+        wri.printstring(line)
 
-    # Line 4: Wi-Fi status
-    display.text(_wifi_line()[:16], 0, 32)
-
-    # Line 5: config session / unlock hint
-    if session.is_session_active():
-        display.text("CFG AKTIV      ", 0, 40)
-    elif session.is_unlock_active():
-        display.text("CFG BEREIT     ", 0, 40)
-
-    display.show()
+    wri.device.show()
 
 
 async def task_display(hw, config, state, targets):
@@ -160,12 +175,15 @@ async def task_display(hw, config, state, targets):
         state:   state dict (read-only in this task)
         targets: RAM-only setpoint dict (read-only in this task)
     """
+    wri = Writer(hw.display, font_hatch_status, verbose=False)
+    wri.set_clip(row_clip=True, col_clip=True, wrap=False)
+
     while True:
         try:
             if session.is_qr_active():
                 _render_qr(hw.display)
             else:
-                _refresh(hw.display, config, state, targets)
+                _refresh(wri, config, state, targets)
         except Exception as e:
             # Display errors must not crash the event loop
             print(f"Display error: {e}")

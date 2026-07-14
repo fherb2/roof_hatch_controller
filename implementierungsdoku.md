@@ -136,9 +136,12 @@ roof_hatch_controller/
 ├── requirements.txt             # externe MicroPython-Pakete
 ├── upload.sh                    # Deploy-Script
 ├── pyrightconfig.json           # VSCode/Pyright: extraPaths: ["source"]
-├── lib/                         # externe Bibliotheken (via mip installiert)
+├── lib/                         # externe Bibliotheken (via mip oder manuell installiert)
 │   ├── microdot.py
-│   └── ssd1306.py
+│   ├── ssd1306.py
+│   ├── uQR.py                   # manuell installiert, siehe 6.2
+│   ├── writer.py                # manuell installiert, siehe 6.2 (Peter Hinch, MIT)
+│   └── font_hatch_status.py     # manuell erzeugt, siehe 6.2 (14px-Font für task_display.py)
 └── source/                      # wird 1:1 auf das Gerät kopiert
     ├── boot.py
     ├── main.py
@@ -200,6 +203,22 @@ github:miguelgrinberg/microdot
 
 1. `https://github.com/JASchilz/uQR` → `uQR.py` → Raw-Button → als `lib/uQR.py` speichern
 2. `upload.sh` kopiert `lib/` danach automatisch aufs Gerät
+
+**Wichtig:** `lib/` liegt auf **Projekt-Ebene** (`roof_hatch_controller/lib/`), **nicht** unter `source/lib/` – `upload.sh` verwendet `LIB_DIR="./lib"` relativ zum Ausführungsverzeichnis des Scripts (Projektwurzel). Dateien, die versehentlich unter `source/lib/` abgelegt werden, werden von `upload.sh` nicht gefunden und folglich nicht hochgeladen.
+
+### 6.2b `writer.py` + `font_hatch_status.py` manuell installieren
+
+Für die größere Schriftart in `task_display.py` (siehe 9.13) werden zwei weitere, nicht per `mip` installierbare Dateien benötigt, ebenfalls nach `lib/` (Projektwurzel):
+
+1. **`writer.py`**: unverändert aus `https://github.com/peterhinch/micropython-font-to-py` (Ordner `writer/writer.py`, MIT-Lizenz) übernehmen → `lib/writer.py`
+2. **`font_hatch_status.py`**: mit dem PC-Tool `font_to_py.py` aus demselben Repository selbst erzeugt:
+   ```bash
+   python3 font_to_py.py DejaVuSansMono.ttf 14 font_hatch_status.py -f -s 32 -l 126
+   ```
+   Ergebnis: monospace, 14px Zeichenhöhe, 8px Zeichenbreite, Zeichensatz 32–126 (ASCII), ca. 8,3 KB. Datei nach `lib/font_hatch_status.py` legen.
+3. `upload.sh` kopiert `lib/` danach automatisch aufs Gerät (wie bei `uQR.py`)
+
+Bei Bedarf einer anderen Schriftart/-größe: `font_to_py.py` mit anderem Höhenwert bzw. anderer `.ttf`-Datei erneut ausführen. Zeilenraster in `task_display.py` (`_LINE_HEIGHT_PX = 16`) ggf. anpassen, falls die neue Zeichenhöhe nicht mehr zur bisherigen Rasterung passt.
 
 ### 6.3 `upload.sh`
 
@@ -660,28 +679,43 @@ if falling_edge detected and debounced:
 
 ### 9.13 `app/task_display.py`
 
-Aktualisiert OLED alle 500ms. Layout (128×64 px, 8 Zeilen à 16 Zeichen):
+Aktualisiert OLED alle 500ms. Normalbetrieb zeigt **nur noch die 4 Lukenstatus-Zeilen**, in größerer Schrift als zuvor (siehe unten) – keine WLAN-/IP-Zeile und kein Session-Hinweis mehr auf dieser Seite. Begründung: die IP ist jetzt unter dem QR-Code zu finden (siehe QR-Modus unten), und der Konfigurations-Session-Status wird ausschließlich und unmittelbar auf der Webseite selbst angezeigt.
+
+**Layout Normalbetrieb** (128×64 px, 4 Zeilen à 16px, füllen die volle Höhe):
 
 ```
-Zeile 0: "<short_name> <status>"   Luke 1
-Zeile 1: "<short_name> <status>"   Luke 2
-Zeile 2: "<short_name> <status>"   Luke 3
-Zeile 3: "<short_name> <status>"   Luke 4
-Zeile 4: IP-Adresse / "Kein WLAN"
-Zeile 5: "CFG AKTIV" / "CFG BEREIT" (wenn Session/Unlock aktiv)
-Zeile 6–7: reserviert
+Zeile 0 (y=0):  "<short_name> <status>"   Luke 1
+Zeile 1 (y=16): "<short_name> <status>"   Luke 2
+Zeile 2 (y=32): "<short_name> <status>"   Luke 3
+Zeile 3 (y=48): "<short_name> <status>"   Luke 4
 ```
+
+**Größere Schrift via `Writer`-Klasse:** Statt des eingebauten 8×8-Fonts von `framebuf`/`ssd1306.py` (der keine Skalierung unterstützt – nur ganzzahlige Pixel-Verdopplung wäre möglich, was als zu grob verworfen wurde) wird `lib/writer.py` (Peter Hinch, `micropython-font-to-py`, MIT-Lizenz, unverändert übernommen) zusammen mit `lib/font_hatch_status.py` verwendet.
+
+`font_hatch_status.py` wurde mit `font_to_py.py` aus `DejaVu Sans Mono` erzeugt:
+
+```bash
+font_to_py.py DejaVuSansMono.ttf 14 font_hatch_status.py -f -s 32 -l 126
+```
+
+- Zeichenhöhe 14px, monospace (`-f`), Zeichensatz 32–126 (ASCII)
+- Resultierende Zeichenbreite: 8px/Zeichen (monospace) → 16 Zeichen passen exakt in 128px Breite
+- Bei 16px Zeilenraster bleiben 2px Zwischenraum pro Zeile
+- Dateigröße ca. 8,3 KB (Flash, unproblematisch)
+
+`Writer`-Instanz wird einmalig in `task_display()` erzeugt (nicht bei jedem Refresh neu) und für jede Zeile per `Writer.set_textpos(display, zeile*16, 0)` + `wri.printstring(line)` positioniert. `wri.set_clip(row_clip=True, col_clip=True, wrap=False)` verhindert automatisches Zeilenumbrechen, da die Zeilenposition manuell über die Statuszeilen gesteuert wird.
 
 Status-Werte: `"BEWEGT"` (target≠actual, auch während Fail-Safe-Wiederherstellung), `"?ZU?"` (Ist == Soll == `FAILSAFE_DEG`: schwerkraftbedingt zugefallen, unverriegelt), `"ZU"` (pos_idx=0), `"AUF"` (letzter Index), `"P2"…"P5"` (Zwischenpositionen), `"???"` (Position nicht in Positionsliste – sollte im Normalbetrieb nicht mehr auftreten).
 
 **QR-Modus** (`session.is_qr_active()` = True, ausgelöst durch kurzen Tastendruck):
 
-- Ganzes Display weiß, schwarzer QR-Code zentriert
-- URL: `http://<aktuelle-IP>` (STA oder AP)
+- Oberer Bereich (0–47px, `qr_area_height = 64 - _IP_LINE_PX`): weißer Hintergrund, schwarzer QR-Code zentriert
+- **Unterer Bereich (48–63px, 16px, neu):** IP-Adresse als reiner Text (ohne `http://`-Präfix), im normalen eingebauten 8px-Font, horizontal zentriert, schwarz auf weiß
+- URL für die QR-Codierung weiterhin `http://<aktuelle-IP>` (STA oder AP); die separate Textzeile zeigt nur die nackte IP (`_current_ip()`)
 - QR-Matrix wird einmalig via `uQR` generiert und gecacht solange sich die URL nicht ändert (Generierung dauert ca. 0,5 s)
-- Scale 1px/Modul + 4px Quiet Zone → passt für typische Home-IPs auf 128×64
+- Scale 1px/Modul + 4px Quiet Zone, jetzt auf die oberen 48px begrenzt statt bisher volle 64px – bei typischen Heim-IPs weiterhin ausreichend Platz
 - Mit iOS Kamera-App direkt scannbar
-- Wenn `uQR` nicht in `/lib` liegt: Fallback-Text `"uQR not found"` auf Display
+- Wenn `uQR` nicht in `/lib` liegt: Fallback-Text `"uQR not found"` auf Display (unverändert)
 
 ### 9.14 `app/task_webserver.py`
 
@@ -891,10 +925,11 @@ Nach Fail-Safe (WDT-Reset): normaler Startablauf wird fortgesetzt. In Stage 2b w
 1. `session.show_qr()` setzt `_qr_until = time.time() + 15`
 2. `task_display` erkennt `is_qr_active()` = True und ruft `_render_qr()` auf
 3. QR-Matrix wird einmalig via `uQR` generiert (URL = `http://<IP>`) und gecacht
-4. OLED zeigt weißen Hintergrund mit schwarzem QR-Code (zentriert, 4px Quiet Zone)
-5. Nach 15s kehrt `task_display` automatisch zum Normalmodus zurück
+4. OLED zeigt weißen Hintergrund mit schwarzem QR-Code (zentriert, 4px Quiet Zone), begrenzt auf die oberen 48px
+5. **Neu:** In den unteren 16px erscheint zusätzlich die reine IP-Adresse (ohne `http://`) als Text im normalen 8px-Font, horizontal zentriert – seit die IP-/WLAN-Zeile aus dem Normalbetrieb entfernt wurde (siehe 9.13), ist dies die einzige Stelle, an der die IP am Gerät sichtbar ist
+6. Nach 15s kehrt `task_display` automatisch zum Normalmodus zurück
 
-**Scannbarkeit:** Mit iOS Kamera-App direkt scannbar. Scale 1 (1px/Modul) ist bei 128×64 ausreichend – Scale 2 würde für längere URLs nicht mehr passen.
+**Scannbarkeit:** Mit iOS Kamera-App direkt scannbar. Scale 1 (1px/Modul) ist im auf 48px reduzierten QR-Bereich bei typischen Heim-IPs weiterhin ausreichend.
 
 **Bibliothek:** `uQR` (JASchilz/uQR) – erzeugt eine 2D-Bool-Matrix. True = schwarzes Modul, False = weißes Modul. Muss manuell als `/lib/uQR.py` auf das Gerät kopiert werden (nicht per mip installierbar).
 
