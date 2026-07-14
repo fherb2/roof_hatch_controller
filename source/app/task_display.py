@@ -33,9 +33,11 @@ except ImportError:
 _qr_cache_url    = None  # URL for which the matrix was generated
 _qr_cache_matrix = None  # cached matrix to avoid regenerating on every refresh
 
-_REFRESH_MS     = 500  # display refresh interval in milliseconds
+_REFRESH_MS     = 333  # display refresh interval in milliseconds
 _LINE_HEIGHT_PX = 16   # px per hatch status line; 4 lines exactly fill 64px
 _IP_LINE_PX     = 16   # px reserved at the bottom of the QR screen for the IP text
+
+_SPIN_FRAMES = ["|", "/", "-", "\\"]  # rotating-stroke animation while moving
 
 
 def _find_pos_idx(hatch_deg, positions):
@@ -46,22 +48,24 @@ def _find_pos_idx(hatch_deg, positions):
     return None
 
 
-def _status_text(idx, state, targets, config):
-    """Return a status string (max 9 chars) for hatch idx.
+def _status_text(idx, state, targets, config, spin_frame=0):
+    """Return a fixed 4-character status string for hatch idx.
 
-    "BEWEGT"  - target differs from actual (moving or fail-safe recovery
-                in progress)
+    "_|__"/"_/__"/"_-__"/"_\\__" (spin_frame 0-3) - target differs from
+                actual (moving or fail-safe recovery in progress);
+                rotates one frame per refresh cycle for a simple
+                "in progress" animation instead of a long static word
     "?ZU?"    - actual and target are both FAILSAFE_DEG: hatch fell closed
                 by gravity after a fail-safe sequence, position unverified
                 and unlocked
-    "ZU"      - at first position (index 0, most closed)
-    "AUF"     - at last position (most open)
-    "P{n}"    - at intermediate position n (1-based, P2 ... P(n-1))
-    "???"     - actual position not found in positions list (should not
+    "ZU  "    - at first position (index 0, most closed)
+    "AUF "    - at last position (most open)
+    "P{n}  "  - at intermediate position n (1-based, P2 ... P(n-1))
+    "??? "    - actual position not found in positions list (should not
                 occur in normal operation after fail-safe handling)
     """
     if targets[idx]["hatch_deg"] != state["hatches"][idx]["hatch_deg"]:
-        return "BEWEGT"
+        return " " + _SPIN_FRAMES[spin_frame % len(_SPIN_FRAMES)] + "  "
 
     hatch_deg = state["hatches"][idx]["hatch_deg"]
     if hatch_deg == FAILSAFE_DEG:
@@ -71,12 +75,13 @@ def _status_text(idx, state, targets, config):
     pos_idx   = _find_pos_idx(hatch_deg, positions)
 
     if pos_idx is None:
-        return "???"
+        return "??? "
     if pos_idx == 0:
-        return "ZU"
+        return "ZU  "
     if pos_idx == len(positions) - 1:
-        return "AUF"
-    return f"P{pos_idx + 1}"  # 1-based, P2 ... P(n-1) for intermediate
+        return "AUF "
+    label = f"P{pos_idx + 1}"
+    return label + " " * (4 - len(label))  # 1-based, P2 ... P(n-1) for intermediate
 
 
 def _current_ip():
@@ -103,6 +108,11 @@ def _render_qr(display):
     on every 500 ms refresh cycle.
     """
     global _qr_cache_url, _qr_cache_matrix
+
+    # QR mode always draws its own black-on-white / white-on-black pixels
+    # directly and must not be affected by the config-session inversion
+    # used in the normal status view.
+    display.invert(False)
 
     if not _QR_AVAILABLE:
         display.fill(0)
@@ -147,22 +157,35 @@ def _render_qr(display):
     display.show()
 
 
+_spin_frame = 0  # module-level counter, advances by one every refresh cycle
+
+
 def _refresh(wri, config, state, targets):
     """Redraw the entire display: one larger-font status line per hatch.
+
+    Inverted (negative) display indicates that the config session is
+    reachable right now - either the 60s unlock window is open or the
+    1h session is already active. This is the only on-device indicator
+    of that state; the config button itself only ever appears on the
+    web page.
 
     Args:
         wri: Writer instance bound to the display and font_hatch_status,
              created once in task_display() and reused on every refresh.
     """
+    global _spin_frame
+    config_reachable = session.is_session_active() or session.is_unlock_active()
+    wri.device.invert(config_reachable)
     wri.device.fill(0)
 
     for i in range(len(targets)):
         short  = config["hatches"][i]["short_name"][:6]
-        status = _status_text(i, state, targets, config)
+        status = _status_text(i, state, targets, config, _spin_frame)
         line   = f"{short:<6} {status}"
         Writer.set_textpos(wri.device, i * _LINE_HEIGHT_PX, 0)
         wri.printstring(line)
 
+    _spin_frame = (_spin_frame + 1) % len(_SPIN_FRAMES)
     wri.device.show()
 
 

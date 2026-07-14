@@ -60,7 +60,7 @@ where the event loop itself stops responding.
 """
 
 import uasyncio
-from app.hw_config import PCA9685_CH, RELAY_CH, FAILSAFE_DEG, HATCH_STEP_US
+from app.hw_config import PCA9685_CH, RELAY_CH, FAILSAFE_DEG, HATCH_MIN_STEP_MS
 from app.state import save_state
 from shared.servo_units import deg_to_us
 
@@ -84,24 +84,31 @@ _HATCH_SETTLE_TO_BRAKE_CLOSE_MS = 200  # target reached -> brake closes
 _BRAKE_CLOSE_TO_RELAY_OFF_MS    = 500  # brake-close command -> relay off
 
 
-def _compute_step_ms(hatch_servo_cfg):
-    """Derive the ramp step interval (ms) from the configured speed.
+def _compute_step(hatch_servo_cfg):
+    """Derive (step_us, step_ms) for the movement ramp from the configured
+    speed.
 
-    The hatch servo always steps by the fixed HATCH_STEP_US per step;
-    the interval between steps is computed from the desired angular
-    speed (hatch_servo.speed_deg_per_s) and this servo's µs-per-degree
-    ratio, so that changing the speed in config.json takes effect
-    immediately without needing a step size change.
+    Rather than fixing the step size and deriving whatever (possibly far
+    too small) interval that implies, this fixes a practical minimum
+    step interval (HATCH_MIN_STEP_MS) that reliably exceeds real-world
+    uasyncio scheduling and I2C write overhead - alongside the other
+    concurrent tasks (webserver, watchdog, button poll) - and derives
+    the step size in microseconds needed to hit the configured angular
+    speed at that interval. This keeps the *average* speed correct even
+    though individual steps are coarser than a naive fixed-µs step would
+    suggest.
 
     Args:
         hatch_servo_cfg: config["global"]["hatch_servo"] dict.
     Returns:
-        int step interval in milliseconds, at least 1.
+        (step_us, step_ms) tuple, both at least 1.
     """
     us_per_deg = ((hatch_servo_cfg["pulse_max_us"] - hatch_servo_cfg["pulse_min_us"])
                   / hatch_servo_cfg["range_deg"])
-    deg_per_step = HATCH_STEP_US / us_per_deg
-    return max(1, round(1000 * deg_per_step / hatch_servo_cfg["speed_deg_per_s"]))
+    step_ms = HATCH_MIN_STEP_MS
+    step_us = max(1, round(us_per_deg * hatch_servo_cfg["speed_deg_per_s"]
+                            * step_ms / 1000))
+    return step_us, step_ms
 
 
 async def _move_hatch(idx, hw, config, state, targets):
@@ -167,7 +174,7 @@ async def _move_hatch(idx, hw, config, state, targets):
                                 bs["pulse_max_us"], bs["range_deg"])
     brake_close_us = deg_to_us(h["brake_close_deg"], bs["pulse_min_us"],
                                 bs["pulse_max_us"], bs["range_deg"])
-    step_ms        = _compute_step_ms(hs)
+    step_us, step_ms = _compute_step(hs)
 
     # -- step_preset_servos: brake to brake_open_us; hatch to 0 (no ------
     #    signal) so the servo controller does not see a valid pulse
@@ -203,14 +210,14 @@ async def _move_hatch(idx, hw, config, state, targets):
         await uasyncio.sleep_ms(_BRAKE_OPEN_TO_HATCH_MOVE_MS)
 
         # -- step_move_hatch: ramp hatch servo to target position ---------
-        #    fixed HATCH_STEP_US per step; step_ms derived from the
-        #    configured speed (see _compute_step_ms)
+        #    step_us/step_ms derived from the configured speed at a
+        #    practical minimum interval (see _compute_step)
         current_us = preset_us
         while current_us != target_us:
             if current_us < target_us:
-                current_us = min(current_us + HATCH_STEP_US, target_us)
+                current_us = min(current_us + step_us, target_us)
             else:
-                current_us = max(current_us - HATCH_STEP_US, target_us)
+                current_us = max(current_us - step_us, target_us)
             hw.pwm.set_us(hatch_ch, current_us)
             await uasyncio.sleep_ms(step_ms)
 

@@ -50,10 +50,13 @@ FAILSAFE_DEG = -1    # sentinel: actual or target position unknown (fail-safe st
 # servos. See shared/servo_units.py for the conversion formula.
 SERVO_DIRECTION_REVERSED = True
 
-# Fixed step size for the hatch movement ramp (see task_control.py); the
-# desired speed (config: hatch_servo.speed_deg_per_s) is converted into a
-# step interval at this fixed step size.
-HATCH_STEP_US = 5
+HATCH_MIN_STEP_MS = 15  # practical minimum ramp step interval in ms; must
+                          # reliably exceed the real-world uasyncio scheduling
+                          # + I2C write overhead (multiple concurrent tasks),
+                          # otherwise the actual speed falls far short of the
+                          # configured speed_deg_per_s. The step size in µs is
+                          # derived from this floor at move time (see
+                          # task_control._compute_step()), not fixed.
 
 # PCA9685 channel assignments
 # Each hatch uses two servos: hatch (movement) and brake (locking mechanism)
