@@ -181,7 +181,10 @@ def _refresh(wri, config, state, targets):
     for i in range(len(targets)):
         short  = config["hatches"][i]["short_name"][:6]
         status = _status_text(i, state, targets, config, _spin_frame)
-        line   = f"{short:<6} {status}"
+        # Status always occupies the last 4 columns of the 16-char line,
+        # preceded by exactly one blank column; the short name gets all
+        # remaining space (11 columns) from the start of the line.
+        line   = f"{short:<11} {status}"
         Writer.set_textpos(wri.device, i * _LINE_HEIGHT_PX, 0)
         wri.printstring(line)
 

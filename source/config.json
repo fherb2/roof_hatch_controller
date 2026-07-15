@@ -4,8 +4,8 @@
             "range_deg": 270,
             "pulse_min_us": 500,
             "pulse_max_us": 2500,
-            "hard_stop_min_deg": 0,
-            "hard_stop_max_deg": 270,
+            "hard_stop_min_deg": 120,
+            "hard_stop_max_deg": 150,
             "speed_deg_per_s": 30
         },
         "brake_servo": {
@@ -17,69 +17,69 @@
     "hatches": [
         {
             "name": "Luke 1",
-            "short_name": "Luke1",
-            "brake_open_deg": 10,
-            "brake_close_deg": 170,
+            "short_name": "Luke 1",
+            "brake_open_deg": 85,
+            "brake_close_deg": 95,
             "positions": [
                 {
-                    "hatch_deg": 0
+                    "hatch_deg": 120
                 },
                 {
-                    "hatch_deg": 90
+                    "hatch_deg": 135
                 },
                 {
-                    "hatch_deg": 260
+                    "hatch_deg": 150
                 }
             ]
         },
         {
             "name": "Luke 2",
-            "short_name": "Luke2",
-            "brake_open_deg": 10,
-            "brake_close_deg": 170,
+            "short_name": "Luke 2",
+            "brake_open_deg": 85,
+            "brake_close_deg": 95,
             "positions": [
                 {
-                    "hatch_deg": 0
+                    "hatch_deg": 120
                 },
                 {
-                    "hatch_deg": 90
+                    "hatch_deg": 135
                 },
                 {
-                    "hatch_deg": 260
+                    "hatch_deg": 150
                 }
             ]
         },
         {
             "name": "Luke 3",
-            "short_name": "Luke3",
-            "brake_open_deg": 10,
-            "brake_close_deg": 170,
+            "short_name": "Luke 3",
+            "brake_open_deg": 85,
+            "brake_close_deg": 95,
             "positions": [
                 {
-                    "hatch_deg": 0
+                    "hatch_deg": 120
                 },
                 {
-                    "hatch_deg": 90
+                    "hatch_deg": 135
                 },
                 {
-                    "hatch_deg": 260
+                    "hatch_deg": 150
                 }
             ]
         },
         {
             "name": "Luke 4",
-            "short_name": "Luke4",
-            "brake_open_deg": 10,
-            "brake_close_deg": 170,
+            "short_name": "Luke 4",
+            "brake_open_deg": 85,
+            "brake_close_deg": 95,
             "positions": [
                 {
-                    "hatch_deg": 0
+                    "hatch_deg": 120
                 },
                 {
-                    "hatch_deg": 90
+                    "hatch_deg": 135
                 },
                 {
-                    "hatch_deg": 260
+                    "hatch_deg": 150
                 }
             ]
         }

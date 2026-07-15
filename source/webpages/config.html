@@ -186,13 +186,13 @@
                             </div>
 
                             <!-- Short name -->
-                            <label class="form-label small fw-semibold">Kurzname (max.&#160;6&#160;Zeichen, OLED)</label>
+                            <label class="form-label small fw-semibold">Kurzname (max.&#160;11&#160;Zeichen, OLED)</label>
                             <div class="input-group input-group-sm mb-3">
                                 <button class="btn btn-outline-secondary" @click="resetF(h.short_name)">&#8635;</button>
                                 <input type="text" class="form-control" :class="bgClass(h.short_name)"
-                                       x-model="h.short_name.draft" maxlength="6">
+                                       x-model="h.short_name.draft" maxlength="11">
                                 <button class="btn btn-outline-success"
-                                        @click="acceptStr(h.short_name, 6)">&#10003;</button>
+                                        @click="acceptStr(h.short_name, 11)">&#10003;</button>
                             </div>
 
                             <!-- Brake open/close angle (side by side) -->
