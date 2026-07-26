@@ -1,86 +1,158 @@
 {
     "global": {
-        "hatch_servo": {
-            "range_deg": 270,
-            "pulse_min_us": 500,
-            "pulse_max_us": 2500,
-            "hard_stop_min_deg": 120,
-            "hard_stop_max_deg": 150,
-            "speed_deg_per_s": 30
-        },
-        "brake_servo": {
-            "range_deg": 180,
-            "pulse_min_us": 500,
-            "pulse_max_us": 2500
+        "servo_tester": {
+            "pwm_freq_hz": 50,
+            "hatch_servo": {
+                "range_deg": 270,
+                "direction": "neg",
+                "speed_deg_per_s": 30,
+                "pulse_min_us": 500,
+                "pulse_max_us": 2500,
+                "hard_stop_min_deg": 0,
+                "hard_stop_max_deg": 270,
+                "test_angle_a_deg": 0,
+                "test_angle_b_deg": 90
+            },
+            "brake_servo": {
+                "range_deg": 180,
+                "direction": "neg",
+                "speed_deg_per_s": 30,
+                "pulse_min_us": 500,
+                "pulse_max_us": 2500,
+                "hard_stop_min_deg": 0,
+                "hard_stop_max_deg": 180,
+                "test_angle_a_deg": 10,
+                "test_angle_b_deg": 170
+            }
         }
     },
     "hatches": [
         {
             "name": "Luke 1",
             "short_name": "Luke 1",
-            "brake_open_deg": 85,
-            "brake_close_deg": 95,
+            "pwm_freq_hz": 50,
+            "hatch_servo": {
+                "range_deg": 270,
+                "direction": "neg",
+                "speed_deg_per_s": 30,
+                "pulse_min_us": 500,
+                "pulse_max_us": 2500,
+                "hard_stop_min_deg": 120,
+                "hard_stop_max_deg": 150,
+                "mount_angle_deg": 120
+            },
+            "brake_servo": {
+                "range_deg": 180,
+                "direction": "neg",
+                "speed_deg_per_s": 30,
+                "pulse_min_us": 500,
+                "pulse_max_us": 2500,
+                "hard_stop_min_deg": 0,
+                "hard_stop_max_deg": 180,
+                "mount_angle_deg": 90,
+                "open_deg": 85,
+                "close_deg": 95
+            },
             "positions": [
-                {
-                    "hatch_deg": 120
-                },
-                {
-                    "hatch_deg": 135
-                },
-                {
-                    "hatch_deg": 150
-                }
+                { "hatch_deg": 120 },
+                { "hatch_deg": 135 },
+                { "hatch_deg": 150 }
             ]
         },
         {
             "name": "Luke 2",
             "short_name": "Luke 2",
-            "brake_open_deg": 85,
-            "brake_close_deg": 95,
+            "pwm_freq_hz": 50,
+            "hatch_servo": {
+                "range_deg": 270,
+                "direction": "neg",
+                "speed_deg_per_s": 30,
+                "pulse_min_us": 500,
+                "pulse_max_us": 2500,
+                "hard_stop_min_deg": 120,
+                "hard_stop_max_deg": 150,
+                "mount_angle_deg": 120
+            },
+            "brake_servo": {
+                "range_deg": 180,
+                "direction": "neg",
+                "speed_deg_per_s": 30,
+                "pulse_min_us": 500,
+                "pulse_max_us": 2500,
+                "hard_stop_min_deg": 0,
+                "hard_stop_max_deg": 180,
+                "mount_angle_deg": 90,
+                "open_deg": 85,
+                "close_deg": 95
+            },
             "positions": [
-                {
-                    "hatch_deg": 120
-                },
-                {
-                    "hatch_deg": 135
-                },
-                {
-                    "hatch_deg": 150
-                }
+                { "hatch_deg": 120 },
+                { "hatch_deg": 135 },
+                { "hatch_deg": 150 }
             ]
         },
         {
             "name": "Luke 3",
             "short_name": "Luke 3",
-            "brake_open_deg": 85,
-            "brake_close_deg": 95,
+            "pwm_freq_hz": 50,
+            "hatch_servo": {
+                "range_deg": 270,
+                "direction": "neg",
+                "speed_deg_per_s": 30,
+                "pulse_min_us": 500,
+                "pulse_max_us": 2500,
+                "hard_stop_min_deg": 120,
+                "hard_stop_max_deg": 150,
+                "mount_angle_deg": 120
+            },
+            "brake_servo": {
+                "range_deg": 180,
+                "direction": "neg",
+                "speed_deg_per_s": 30,
+                "pulse_min_us": 500,
+                "pulse_max_us": 2500,
+                "hard_stop_min_deg": 0,
+                "hard_stop_max_deg": 180,
+                "mount_angle_deg": 90,
+                "open_deg": 85,
+                "close_deg": 95
+            },
             "positions": [
-                {
-                    "hatch_deg": 120
-                },
-                {
-                    "hatch_deg": 135
-                },
-                {
-                    "hatch_deg": 150
-                }
+                { "hatch_deg": 120 },
+                { "hatch_deg": 135 },
+                { "hatch_deg": 150 }
             ]
         },
         {
             "name": "Luke 4",
             "short_name": "Luke 4",
-            "brake_open_deg": 85,
-            "brake_close_deg": 95,
+            "pwm_freq_hz": 50,
+            "hatch_servo": {
+                "range_deg": 270,
+                "direction": "neg",
+                "speed_deg_per_s": 30,
+                "pulse_min_us": 500,
+                "pulse_max_us": 2500,
+                "hard_stop_min_deg": 120,
+                "hard_stop_max_deg": 150,
+                "mount_angle_deg": 120
+            },
+            "brake_servo": {
+                "range_deg": 180,
+                "direction": "neg",
+                "speed_deg_per_s": 30,
+                "pulse_min_us": 500,
+                "pulse_max_us": 2500,
+                "hard_stop_min_deg": 0,
+                "hard_stop_max_deg": 180,
+                "mount_angle_deg": 90,
+                "open_deg": 85,
+                "close_deg": 95
+            },
             "positions": [
-                {
-                    "hatch_deg": 120
-                },
-                {
-                    "hatch_deg": 135
-                },
-                {
-                    "hatch_deg": 150
-                }
+                { "hatch_deg": 120 },
+                { "hatch_deg": 135 },
+                { "hatch_deg": 150 }
             ]
         }
     ]

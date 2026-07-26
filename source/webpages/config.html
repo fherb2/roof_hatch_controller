@@ -9,6 +9,10 @@
           onerror="this.onerror=null;this.href='/static/bootstrap.min.css'">
     <style>
         .field-edited { background-color: rgba(255, 193,  7, 0.25) !important; border-color: #ffc107 !important; }
+        .servo-col-title { font-size: 1.05rem; font-weight: 700; }
+        .servo-col-right { border-left: 1px solid #dee2e6; }
+        @media (max-width: 767px) { .servo-col-right { border-left: none; border-top: 1px solid #dee2e6; padding-top: .75rem; margin-top: .5rem; } }
+        .go-gap { margin-left: .75rem; }
     </style>
 </head>
 <body class="bg-light" x-data="configApp()">
@@ -16,8 +20,15 @@
     <!-- Navbar -->
     <nav class="navbar navbar-dark bg-dark sticky-top">
         <div class="container-fluid">
-            <a href="/" class="btn btn-sm btn-outline-light">&#8592; Zur&#252;ck</a>
-            <span class="navbar-brand mb-0 mx-2 h6">&#9881; Konfiguration</span>
+            <a href="/" class="btn btn-sm btn-outline-light" x-text="t('back')"></a>
+            <span class="navbar-brand mb-0 mx-2 h6" x-text="t('title')"></span>
+            <div class="d-flex align-items-center gap-2">
+                <select class="form-select form-select-sm" style="width:auto" x-model="lang">
+                    <option value="de">DE</option>
+                    <option value="en">EN</option>
+                </select>
+                <button class="btn btn-sm btn-outline-light" @click="downloadConfig()" x-text="t('download')"></button>
+            </div>
         </div>
     </nav>
 
@@ -27,148 +38,24 @@
 
     <!-- Legend -->
     <div class="alert alert-light border mx-3 mt-3 mb-0 py-2 small">
-        <strong>&#8635;</strong> Zur&#252;cksetzen &ensp;
-        <strong>&#10003;</strong> &#220;bernehmen (wird sofort dauerhaft gespeichert) &ensp;
-        <strong>&#9654;</strong> Anfahren<br>
-        <span class="px-2 me-1" style="background:rgba(255,193,7,.3)">&#9632;</span>editiert, noch nicht &#252;bernommen
+        <strong>&#8635;</strong> <span x-text="t('legend_reset')"></span> &ensp;
+        <strong>&#10003;</strong> <span x-text="t('legend_accept')"></span> &ensp;
+        <strong>&#9654;</strong> <span x-text="t('legend_go')"></span><br>
+        <span class="px-2 me-1" style="background:rgba(255,193,7,.3)">&#9632;</span><span x-text="t('legend_edited')"></span>
     </div>
 
     <!-- Main content: hidden until config loaded -->
-    <div class="container-sm py-3" x-show="loaded">
+    <div class="container-lg py-3" x-show="loaded">
         <div class="accordion" id="cfgAccordion">
 
             <!-- ============================================================
-                 Global settings: hatch (lever) servo + brake servo
-                 ============================================================ -->
-            <div class="accordion-item">
-                <h2 class="accordion-header">
-                    <button class="accordion-button" type="button"
-                            data-bs-toggle="collapse" data-bs-target="#panelGlobal">
-                        Globale Einstellungen
-                    </button>
-                </h2>
-                <div id="panelGlobal" class="accordion-collapse collapse show">
-                    <div class="accordion-body">
-
-                        <div class="fw-semibold small mb-2">Lukenservo (f&#252;r alle 4 Luken einheitlich)</div>
-
-                        <label class="form-label small fw-semibold">Stellbereich</label>
-                        <div class="input-group input-group-sm mb-3">
-                            <button class="btn btn-outline-secondary" @click="resetF(hs.range_deg)">&#8635;</button>
-                            <select class="form-select" :class="bgClass(hs.range_deg)"
-                                    x-model="hs.range_deg.draft">
-                                <option value="180">180&#176;</option>
-                                <option value="270">270&#176;</option>
-                            </select>
-                            <button class="btn btn-outline-success"
-                                    @click="acceptSelect(hs.range_deg)">&#10003;</button>
-                        </div>
-
-                        <div class="row g-2 mb-3">
-                            <div class="col-6">
-                                <label class="form-label small fw-semibold">Impulszeit min (&#181;s)</label>
-                                <div class="input-group input-group-sm">
-                                    <button class="btn btn-outline-secondary" @click="resetF(hs.pulse_min_us)">&#8635;</button>
-                                    <input type="number" class="form-control" :class="bgClass(hs.pulse_min_us)"
-                                           x-model="hs.pulse_min_us.draft" min="500" max="2500">
-                                    <button class="btn btn-outline-success"
-                                            @click="acceptNum(hs.pulse_min_us, 500, 2500)">&#10003;</button>
-                                </div>
-                            </div>
-                            <div class="col-6">
-                                <label class="form-label small fw-semibold">Impulszeit max (&#181;s)</label>
-                                <div class="input-group input-group-sm">
-                                    <button class="btn btn-outline-secondary" @click="resetF(hs.pulse_max_us)">&#8635;</button>
-                                    <input type="number" class="form-control" :class="bgClass(hs.pulse_max_us)"
-                                           x-model="hs.pulse_max_us.draft" min="500" max="2500">
-                                    <button class="btn btn-outline-success"
-                                            @click="acceptNum(hs.pulse_max_us, 500, 2500)">&#10003;</button>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="row g-2 mb-3">
-                            <div class="col-6">
-                                <label class="form-label small fw-semibold">Hard-Stop min (&#176;)</label>
-                                <div class="input-group input-group-sm">
-                                    <button class="btn btn-outline-secondary" @click="resetF(hs.hard_stop_min_deg)">&#8635;</button>
-                                    <input type="number" class="form-control" :class="bgClass(hs.hard_stop_min_deg)"
-                                           x-model="hs.hard_stop_min_deg.draft" min="0" :max="hs.range_deg.committed">
-                                    <button class="btn btn-outline-success"
-                                            @click="acceptNum(hs.hard_stop_min_deg, 0, hs.range_deg.committed)">&#10003;</button>
-                                </div>
-                            </div>
-                            <div class="col-6">
-                                <label class="form-label small fw-semibold">Hard-Stop max (&#176;)</label>
-                                <div class="input-group input-group-sm">
-                                    <button class="btn btn-outline-secondary" @click="resetF(hs.hard_stop_max_deg)">&#8635;</button>
-                                    <input type="number" class="form-control" :class="bgClass(hs.hard_stop_max_deg)"
-                                           x-model="hs.hard_stop_max_deg.draft" min="0" :max="hs.range_deg.committed">
-                                    <button class="btn btn-outline-success"
-                                            @click="acceptNum(hs.hard_stop_max_deg, 0, hs.range_deg.committed)">&#10003;</button>
-                                </div>
-                            </div>
-                        </div>
-
-                        <label class="form-label small fw-semibold">Geschwindigkeit (&#176;/s)</label>
-                        <div class="input-group input-group-sm mb-4">
-                            <button class="btn btn-outline-secondary" @click="resetF(hs.speed_deg_per_s)">&#8635;</button>
-                            <input type="number" class="form-control" :class="bgClass(hs.speed_deg_per_s)"
-                                   x-model="hs.speed_deg_per_s.draft" min="1" max="500">
-                            <button class="btn btn-outline-success"
-                                    @click="acceptNum(hs.speed_deg_per_s, 1, 500)">&#10003;</button>
-                        </div>
-
-                        <div class="fw-semibold small mb-2">Bremsservo (f&#252;r alle 4 Luken einheitlich)</div>
-
-                        <label class="form-label small fw-semibold">Stellbereich</label>
-                        <div class="input-group input-group-sm mb-3">
-                            <button class="btn btn-outline-secondary" @click="resetF(bs.range_deg)">&#8635;</button>
-                            <select class="form-select" :class="bgClass(bs.range_deg)"
-                                    x-model="bs.range_deg.draft">
-                                <option value="180">180&#176;</option>
-                                <option value="270">270&#176;</option>
-                            </select>
-                            <button class="btn btn-outline-success"
-                                    @click="acceptSelect(bs.range_deg)">&#10003;</button>
-                        </div>
-
-                        <div class="row g-2 mb-3">
-                            <div class="col-6">
-                                <label class="form-label small fw-semibold">Impulszeit min (&#181;s)</label>
-                                <div class="input-group input-group-sm">
-                                    <button class="btn btn-outline-secondary" @click="resetF(bs.pulse_min_us)">&#8635;</button>
-                                    <input type="number" class="form-control" :class="bgClass(bs.pulse_min_us)"
-                                           x-model="bs.pulse_min_us.draft" min="500" max="2500">
-                                    <button class="btn btn-outline-success"
-                                            @click="acceptNum(bs.pulse_min_us, 500, 2500)">&#10003;</button>
-                                </div>
-                            </div>
-                            <div class="col-6">
-                                <label class="form-label small fw-semibold">Impulszeit max (&#181;s)</label>
-                                <div class="input-group input-group-sm">
-                                    <button class="btn btn-outline-secondary" @click="resetF(bs.pulse_max_us)">&#8635;</button>
-                                    <input type="number" class="form-control" :class="bgClass(bs.pulse_max_us)"
-                                           x-model="bs.pulse_max_us.draft" min="500" max="2500">
-                                    <button class="btn btn-outline-success"
-                                            @click="acceptNum(bs.pulse_max_us, 500, 2500)">&#10003;</button>
-                                </div>
-                            </div>
-                        </div>
-
-                    </div>
-                </div>
-            </div><!-- /global -->
-
-            <!-- ============================================================
-                 Hatch accordion items (one per hatch, generated by x-for)
+                 One accordion item per hatch, fully independent
                  ============================================================ -->
             <template x-for="(h, hi) in hatches" :key="hi">
                 <div class="accordion-item">
                     <h2 class="accordion-header">
                         <button class="accordion-button collapsed" type="button"
-                                data-bs-toggle="collapse"
-                                :data-bs-target="'#panelH' + hi">
+                                data-bs-toggle="collapse" :data-bs-target="'#panelH' + hi">
                             <span x-text="h.name.committed"></span>
                         </button>
                     </h2>
@@ -176,81 +63,269 @@
                         <div class="accordion-body">
 
                             <!-- Name -->
-                            <label class="form-label small fw-semibold">Name</label>
+                            <label class="form-label small fw-semibold" x-text="t('name')"></label>
                             <div class="input-group input-group-sm mb-3">
                                 <button class="btn btn-outline-secondary" @click="resetF(h.name)">&#8635;</button>
-                                <input type="text" class="form-control" :class="bgClass(h.name)"
-                                       x-model="h.name.draft">
-                                <button class="btn btn-outline-success"
-                                        @click="acceptStr(h.name, 32)">&#10003;</button>
+                                <input type="text" class="form-control" :class="bgClass(h.name)" x-model="h.name.draft">
+                                <button class="btn btn-outline-success" @click="acceptStr(h.name, 32)">&#10003;</button>
                             </div>
 
                             <!-- Short name -->
-                            <label class="form-label small fw-semibold">Kurzname (max.&#160;11&#160;Zeichen, OLED)</label>
+                            <label class="form-label small fw-semibold" x-text="t('short_name')"></label>
                             <div class="input-group input-group-sm mb-3">
                                 <button class="btn btn-outline-secondary" @click="resetF(h.short_name)">&#8635;</button>
                                 <input type="text" class="form-control" :class="bgClass(h.short_name)"
                                        x-model="h.short_name.draft" maxlength="11">
-                                <button class="btn btn-outline-success"
-                                        @click="acceptStr(h.short_name, 11)">&#10003;</button>
+                                <button class="btn btn-outline-success" @click="acceptStr(h.short_name, 11)">&#10003;</button>
                             </div>
 
-                            <!-- Brake open/close angle (side by side) -->
-                            <div class="row g-2 mb-3">
-                                <div class="col-6">
-                                    <label class="form-label small fw-semibold">Bremse Auf (&#176;)</label>
-                                    <div class="input-group input-group-sm">
-                                        <button class="btn btn-outline-secondary" @click="resetF(h.brake_open_deg)">&#8635;</button>
-                                        <input type="number" class="form-control" :class="bgClass(h.brake_open_deg)"
-                                               x-model="h.brake_open_deg.draft" min="0" :max="bs.range_deg.committed">
-                                        <button class="btn btn-outline-success"
-                                                @click="acceptNum(h.brake_open_deg, 0, bs.range_deg.committed)">&#10003;</button>
-                                    </div>
-                                </div>
-                                <div class="col-6">
-                                    <label class="form-label small fw-semibold">Bremse Zu (&#176;)</label>
-                                    <div class="input-group input-group-sm">
-                                        <button class="btn btn-outline-secondary" @click="resetF(h.brake_close_deg)">&#8635;</button>
-                                        <input type="number" class="form-control" :class="bgClass(h.brake_close_deg)"
-                                               x-model="h.brake_close_deg.draft" min="0" :max="bs.range_deg.committed">
-                                        <button class="btn btn-outline-success"
-                                                @click="acceptNum(h.brake_close_deg, 0, bs.range_deg.committed)">&#10003;</button>
-                                    </div>
-                                </div>
+                            <!-- PWM frequency: shared by hatch_servo + brake_servo of this channel -->
+                            <label class="form-label small fw-semibold" x-text="t('pwm_freq') + ' (' + t('this_channel') + ')'"></label>
+                            <div class="input-group input-group-sm mb-4">
+                                <button class="btn btn-outline-secondary" @click="resetF(h.pwm_freq_hz)">&#8635;</button>
+                                <input type="number" class="form-control" :class="bgClass(h.pwm_freq_hz)"
+                                       x-model="h.pwm_freq_hz.draft" min="50" max="400">
+                                <button class="btn btn-outline-success" @click="acceptNum(h.pwm_freq_hz, 50, 400)">&#10003;</button>
                             </div>
 
-                            <!-- Positions list: positions[0] = ZU, positions[last] = AUF, fixed -->
-                            <div class="fw-semibold small mb-2">Rastpositionen</div>
+                            <div class="row">
+                                <!-- ================= Hebelservo column ================= -->
+                                <div class="col-md-6">
+                                    <div class="servo-col-title mb-2" x-text="t('hatch_servo') + ', ' + t('channel') + ' ' + (hi + 1)"></div>
 
-                            <template x-for="(pos, pi) in h.positions" :key="pi">
-                                <div>
-                                    <label class="form-label small"
-                                           x-text="posLabel(pi, h.positions.length) + ' (&#176;)'">
-                                    </label>
-                                    <div class="input-group input-group-sm mb-2">
-                                        <button class="btn btn-outline-secondary"
-                                                @click="resetF(pos)">&#8635;</button>
-                                        <input type="number" class="form-control" :class="bgClass(pos)"
-                                               x-model="pos.draft"
-                                               :min="hs.hard_stop_min_deg.committed" :max="hs.hard_stop_max_deg.committed">
+                                    <div class="row g-2 mb-2">
+                                        <div class="col-4">
+                                            <label class="form-label small fw-semibold" x-text="t('range')"></label>
+                                            <div class="input-group input-group-sm">
+                                                <button class="btn btn-outline-secondary" @click="resetF(h.hatch_servo.range_deg)">&#8635;</button>
+                                                <select class="form-select" :class="bgClass(h.hatch_servo.range_deg)" x-model="h.hatch_servo.range_deg.draft">
+                                                    <option value="180">180&#176;</option>
+                                                    <option value="270">270&#176;</option>
+                                                    <option value="360">360&#176;</option>
+                                                </select>
+                                                <button class="btn btn-outline-success" @click="acceptSelect(h.hatch_servo.range_deg)">&#10003;</button>
+                                            </div>
+                                        </div>
+                                        <div class="col-4">
+                                            <label class="form-label small fw-semibold" x-text="t('direction')"></label>
+                                            <div class="input-group input-group-sm">
+                                                <button class="btn btn-outline-secondary" @click="resetF(h.hatch_servo.direction)">&#8635;</button>
+                                                <select class="form-select" :class="bgClass(h.hatch_servo.direction)" x-model="h.hatch_servo.direction.draft">
+                                                    <option value="neg" x-text="t('dir_neg')"></option>
+                                                    <option value="pos" x-text="t('dir_pos')"></option>
+                                                </select>
+                                                <button class="btn btn-outline-success" @click="acceptStrSelect(h.hatch_servo.direction)">&#10003;</button>
+                                            </div>
+                                        </div>
+                                        <div class="col-4">
+                                            <label class="form-label small fw-semibold" x-text="t('speed')"></label>
+                                            <div class="input-group input-group-sm">
+                                                <button class="btn btn-outline-secondary" @click="resetF(h.hatch_servo.speed_deg_per_s)">&#8635;</button>
+                                                <input type="number" class="form-control" :class="bgClass(h.hatch_servo.speed_deg_per_s)"
+                                                       x-model="h.hatch_servo.speed_deg_per_s.draft" min="30" max="180">
+                                                <button class="btn btn-outline-success" @click="acceptNum(h.hatch_servo.speed_deg_per_s, 30, 180)">&#10003;</button>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="row g-2 mb-2">
+                                        <div class="col-6">
+                                            <label class="form-label small fw-semibold" x-text="t('pulse_at') + ' 0&#176;'"></label>
+                                            <div class="input-group input-group-sm">
+                                                <button class="btn btn-outline-secondary" @click="resetF(h.hatch_servo.pulse_min_us)">&#8635;</button>
+                                                <input type="number" class="form-control" :class="bgClass(h.hatch_servo.pulse_min_us)"
+                                                       x-model="h.hatch_servo.pulse_min_us.draft" min="500" max="4000">
+                                                <button class="btn btn-outline-success" @click="acceptNum(h.hatch_servo.pulse_min_us, 500, 4000)">&#10003;</button>
+                                            </div>
+                                        </div>
+                                        <div class="col-6">
+                                            <label class="form-label small fw-semibold" x-text="t('pulse_at') + ' ' + h.hatch_servo.range_deg.committed + '&#176;'"></label>
+                                            <div class="input-group input-group-sm">
+                                                <button class="btn btn-outline-secondary" @click="resetF(h.hatch_servo.pulse_max_us)">&#8635;</button>
+                                                <input type="number" class="form-control" :class="bgClass(h.hatch_servo.pulse_max_us)"
+                                                       x-model="h.hatch_servo.pulse_max_us.draft" min="500" max="4000">
+                                                <button class="btn btn-outline-success" @click="acceptNum(h.hatch_servo.pulse_max_us, 500, 4000)">&#10003;</button>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="row g-2 mb-2">
+                                        <div class="col-6">
+                                            <label class="form-label small fw-semibold" x-text="t('hard_stop_min')"></label>
+                                            <div class="input-group input-group-sm">
+                                                <button class="btn btn-outline-secondary" @click="resetF(h.hatch_servo.hard_stop_min_deg)">&#8635;</button>
+                                                <input type="number" class="form-control" :class="bgClass(h.hatch_servo.hard_stop_min_deg)"
+                                                       x-model="h.hatch_servo.hard_stop_min_deg.draft" min="0" :max="h.hatch_servo.range_deg.committed">
+                                                <button class="btn btn-outline-success" @click="acceptNum(h.hatch_servo.hard_stop_min_deg, 0, h.hatch_servo.range_deg.committed)">&#10003;</button>
+                                            </div>
+                                        </div>
+                                        <div class="col-6">
+                                            <label class="form-label small fw-semibold" x-text="t('hard_stop_max')"></label>
+                                            <div class="input-group input-group-sm">
+                                                <button class="btn btn-outline-secondary" @click="resetF(h.hatch_servo.hard_stop_max_deg)">&#8635;</button>
+                                                <input type="number" class="form-control" :class="bgClass(h.hatch_servo.hard_stop_max_deg)"
+                                                       x-model="h.hatch_servo.hard_stop_max_deg.draft" min="0" :max="h.hatch_servo.range_deg.committed">
+                                                <button class="btn btn-outline-success" @click="acceptNum(h.hatch_servo.hard_stop_max_deg, 0, h.hatch_servo.range_deg.committed)">&#10003;</button>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <label class="form-label small fw-semibold" x-text="t('mount_angle')"></label>
+                                    <div class="input-group input-group-sm mb-3">
+                                        <button class="btn btn-outline-secondary" @click="resetF(h.hatch_servo.mount_angle_deg)">&#8635;</button>
+                                        <input type="number" class="form-control" :class="bgClass(h.hatch_servo.mount_angle_deg)"
+                                               x-model="h.hatch_servo.mount_angle_deg.draft"
+                                               :min="h.hatch_servo.hard_stop_min_deg.committed" :max="h.hatch_servo.hard_stop_max_deg.committed">
                                         <button class="btn btn-outline-success"
-                                                @click="acceptNum(pos, hs.hard_stop_min_deg.committed, hs.hard_stop_max_deg.committed)"
-                                                title="&#220;bernehmen">&#10003;</button>
-                                        <button class="btn btn-outline-info"
-                                                :disabled="pos.draft !== '' + pos.committed"
-                                                @click="testMove(hi, pos.committed)"
-                                                title="Anfahren">&#9654;</button>
+                                                @click="acceptNum(h.hatch_servo.mount_angle_deg, h.hatch_servo.hard_stop_min_deg.committed, h.hatch_servo.hard_stop_max_deg.committed)">&#10003;</button>
+                                        <button class="btn btn-outline-info go-gap"
+                                                :disabled="h.hatch_servo.mount_angle_deg.draft !== '' + h.hatch_servo.mount_angle_deg.committed"
+                                                @click="testMove(hi, h.hatch_servo.mount_angle_deg.committed)">&#9654;</button>
+                                    </div>
+
+                                    <!-- Positions: ZU / P2... / AUF, fixed end-stops -->
+                                    <div class="fw-semibold small mb-2" x-text="t('positions')"></div>
+                                    <template x-for="(pos, pi) in h.positions" :key="pi">
+                                        <div>
+                                            <label class="form-label small" x-text="posLabel(pi, h.positions.length) + ' (&#176;)'"></label>
+                                            <div class="input-group input-group-sm mb-2">
+                                                <button class="btn btn-outline-secondary" @click="resetF(pos)">&#8635;</button>
+                                                <input type="number" class="form-control" :class="bgClass(pos)" x-model="pos.draft"
+                                                       :min="h.hatch_servo.hard_stop_min_deg.committed" :max="h.hatch_servo.hard_stop_max_deg.committed">
+                                                <button class="btn btn-outline-success"
+                                                        @click="acceptNum(pos, h.hatch_servo.hard_stop_min_deg.committed, h.hatch_servo.hard_stop_max_deg.committed)">&#10003;</button>
+                                                <button class="btn btn-outline-info"
+                                                        :disabled="pos.draft !== '' + pos.committed"
+                                                        @click="testMove(hi, pos.committed)">&#9654;</button>
+                                            </div>
+                                        </div>
+                                    </template>
+                                    <div class="d-flex gap-2 mt-1 mb-3">
+                                        <button class="btn btn-sm btn-outline-secondary" @click="addPos(hi)" x-text="'+ ' + t('add_pos')"></button>
+                                        <button class="btn btn-sm btn-outline-secondary" :disabled="h.positions.length <= 2"
+                                                @click="removePos(hi)" x-text="'&#8722; ' + t('remove_pos')"></button>
                                     </div>
                                 </div>
-                            </template>
 
-                            <!-- Add / remove intermediate position; ZU and AUF stay fixed -->
-                            <div class="d-flex gap-2 mt-1">
-                                <button class="btn btn-sm btn-outline-secondary"
-                                        @click="addPos(hi)">+ Zwischenposition</button>
-                                <button class="btn btn-sm btn-outline-secondary"
-                                        :disabled="h.positions.length <= 2"
-                                        @click="removePos(hi)">&#8722; Zwischenposition</button>
+                                <!-- ================= Halteservo column ================= -->
+                                <div class="col-md-6 servo-col-right">
+                                    <div class="servo-col-title mb-2" x-text="t('brake_servo') + ', ' + t('channel') + ' ' + (hi + 1)"></div>
+
+                                    <div class="row g-2 mb-2">
+                                        <div class="col-4">
+                                            <label class="form-label small fw-semibold" x-text="t('range')"></label>
+                                            <div class="input-group input-group-sm">
+                                                <button class="btn btn-outline-secondary" @click="resetF(h.brake_servo.range_deg)">&#8635;</button>
+                                                <select class="form-select" :class="bgClass(h.brake_servo.range_deg)" x-model="h.brake_servo.range_deg.draft">
+                                                    <option value="180">180&#176;</option>
+                                                    <option value="270">270&#176;</option>
+                                                    <option value="360">360&#176;</option>
+                                                </select>
+                                                <button class="btn btn-outline-success" @click="acceptSelect(h.brake_servo.range_deg)">&#10003;</button>
+                                            </div>
+                                        </div>
+                                        <div class="col-4">
+                                            <label class="form-label small fw-semibold" x-text="t('direction')"></label>
+                                            <div class="input-group input-group-sm">
+                                                <button class="btn btn-outline-secondary" @click="resetF(h.brake_servo.direction)">&#8635;</button>
+                                                <select class="form-select" :class="bgClass(h.brake_servo.direction)" x-model="h.brake_servo.direction.draft">
+                                                    <option value="neg" x-text="t('dir_neg')"></option>
+                                                    <option value="pos" x-text="t('dir_pos')"></option>
+                                                </select>
+                                                <button class="btn btn-outline-success" @click="acceptStrSelect(h.brake_servo.direction)">&#10003;</button>
+                                            </div>
+                                        </div>
+                                        <div class="col-4">
+                                            <label class="form-label small fw-semibold" x-text="t('speed')"></label>
+                                            <div class="input-group input-group-sm">
+                                                <button class="btn btn-outline-secondary" @click="resetF(h.brake_servo.speed_deg_per_s)">&#8635;</button>
+                                                <input type="number" class="form-control" :class="bgClass(h.brake_servo.speed_deg_per_s)"
+                                                       x-model="h.brake_servo.speed_deg_per_s.draft" min="30" max="180">
+                                                <button class="btn btn-outline-success" @click="acceptNum(h.brake_servo.speed_deg_per_s, 30, 180)">&#10003;</button>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="row g-2 mb-2">
+                                        <div class="col-6">
+                                            <label class="form-label small fw-semibold" x-text="t('pulse_at') + ' 0&#176;'"></label>
+                                            <div class="input-group input-group-sm">
+                                                <button class="btn btn-outline-secondary" @click="resetF(h.brake_servo.pulse_min_us)">&#8635;</button>
+                                                <input type="number" class="form-control" :class="bgClass(h.brake_servo.pulse_min_us)"
+                                                       x-model="h.brake_servo.pulse_min_us.draft" min="500" max="4000">
+                                                <button class="btn btn-outline-success" @click="acceptNum(h.brake_servo.pulse_min_us, 500, 4000)">&#10003;</button>
+                                            </div>
+                                        </div>
+                                        <div class="col-6">
+                                            <label class="form-label small fw-semibold" x-text="t('pulse_at') + ' ' + h.brake_servo.range_deg.committed + '&#176;'"></label>
+                                            <div class="input-group input-group-sm">
+                                                <button class="btn btn-outline-secondary" @click="resetF(h.brake_servo.pulse_max_us)">&#8635;</button>
+                                                <input type="number" class="form-control" :class="bgClass(h.brake_servo.pulse_max_us)"
+                                                       x-model="h.brake_servo.pulse_max_us.draft" min="500" max="4000">
+                                                <button class="btn btn-outline-success" @click="acceptNum(h.brake_servo.pulse_max_us, 500, 4000)">&#10003;</button>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="row g-2 mb-2">
+                                        <div class="col-6">
+                                            <label class="form-label small fw-semibold" x-text="t('hard_stop_min')"></label>
+                                            <div class="input-group input-group-sm">
+                                                <button class="btn btn-outline-secondary" @click="resetF(h.brake_servo.hard_stop_min_deg)">&#8635;</button>
+                                                <input type="number" class="form-control" :class="bgClass(h.brake_servo.hard_stop_min_deg)"
+                                                       x-model="h.brake_servo.hard_stop_min_deg.draft" min="0" :max="h.brake_servo.range_deg.committed">
+                                                <button class="btn btn-outline-success" @click="acceptNum(h.brake_servo.hard_stop_min_deg, 0, h.brake_servo.range_deg.committed)">&#10003;</button>
+                                            </div>
+                                        </div>
+                                        <div class="col-6">
+                                            <label class="form-label small fw-semibold" x-text="t('hard_stop_max')"></label>
+                                            <div class="input-group input-group-sm">
+                                                <button class="btn btn-outline-secondary" @click="resetF(h.brake_servo.hard_stop_max_deg)">&#8635;</button>
+                                                <input type="number" class="form-control" :class="bgClass(h.brake_servo.hard_stop_max_deg)"
+                                                       x-model="h.brake_servo.hard_stop_max_deg.draft" min="0" :max="h.brake_servo.range_deg.committed">
+                                                <button class="btn btn-outline-success" @click="acceptNum(h.brake_servo.hard_stop_max_deg, 0, h.brake_servo.range_deg.committed)">&#10003;</button>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="row g-2 mb-2">
+                                        <div class="col-6">
+                                            <label class="form-label small fw-semibold" x-text="t('brake_open')"></label>
+                                            <div class="input-group input-group-sm">
+                                                <button class="btn btn-outline-secondary" @click="resetF(h.brake_servo.open_deg)">&#8635;</button>
+                                                <input type="number" class="form-control" :class="bgClass(h.brake_servo.open_deg)"
+                                                       x-model="h.brake_servo.open_deg.draft"
+                                                       :min="h.brake_servo.hard_stop_min_deg.committed" :max="h.brake_servo.hard_stop_max_deg.committed">
+                                                <button class="btn btn-outline-success"
+                                                        @click="acceptNum(h.brake_servo.open_deg, h.brake_servo.hard_stop_min_deg.committed, h.brake_servo.hard_stop_max_deg.committed)">&#10003;</button>
+                                            </div>
+                                        </div>
+                                        <div class="col-6">
+                                            <label class="form-label small fw-semibold" x-text="t('brake_close')"></label>
+                                            <div class="input-group input-group-sm">
+                                                <button class="btn btn-outline-secondary" @click="resetF(h.brake_servo.close_deg)">&#8635;</button>
+                                                <input type="number" class="form-control" :class="bgClass(h.brake_servo.close_deg)"
+                                                       x-model="h.brake_servo.close_deg.draft"
+                                                       :min="h.brake_servo.hard_stop_min_deg.committed" :max="h.brake_servo.hard_stop_max_deg.committed">
+                                                <button class="btn btn-outline-success"
+                                                        @click="acceptNum(h.brake_servo.close_deg, h.brake_servo.hard_stop_min_deg.committed, h.brake_servo.hard_stop_max_deg.committed)">&#10003;</button>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <label class="form-label small fw-semibold" x-text="t('mount_angle')"></label>
+                                    <div class="input-group input-group-sm mb-3">
+                                        <button class="btn btn-outline-secondary" @click="resetF(h.brake_servo.mount_angle_deg)">&#8635;</button>
+                                        <input type="number" class="form-control" :class="bgClass(h.brake_servo.mount_angle_deg)"
+                                               x-model="h.brake_servo.mount_angle_deg.draft"
+                                               :min="h.brake_servo.hard_stop_min_deg.committed" :max="h.brake_servo.hard_stop_max_deg.committed">
+                                        <button class="btn btn-outline-success"
+                                                @click="acceptNum(h.brake_servo.mount_angle_deg, h.brake_servo.hard_stop_min_deg.committed, h.brake_servo.hard_stop_max_deg.committed)">&#10003;</button>
+                                        <button class="btn btn-outline-info go-gap"
+                                                :disabled="h.brake_servo.mount_angle_deg.draft !== '' + h.brake_servo.mount_angle_deg.committed"
+                                                @click="brakeTestMove(hi, h.brake_servo.mount_angle_deg.committed)">&#9654;</button>
+                                    </div>
+                                </div>
                             </div>
 
                         </div>
@@ -258,34 +333,242 @@
                 </div>
             </template>
 
-        </div><!-- /accordion -->
+            <!-- ============================================================
+                 Servo tester: next free channel pair, permanently powered
+                 ============================================================ -->
+            <div class="accordion-item" x-show="tester.pwm_freq_hz">
+                <h2 class="accordion-header">
+                    <button class="accordion-button collapsed" type="button"
+                            data-bs-toggle="collapse" data-bs-target="#panelTester">
+                        <span x-text="t('servo_tester')"></span>
+                    </button>
+                </h2>
+                <div id="panelTester" class="accordion-collapse collapse">
+                    <div class="accordion-body">
+                        <div class="alert alert-warning small" x-text="t('servo_tester_hint')"></div>
 
+                        <label class="form-label small fw-semibold" x-text="t('pwm_freq')"></label>
+                        <div class="input-group input-group-sm mb-4">
+                            <button class="btn btn-outline-secondary" @click="resetF(tester.pwm_freq_hz)">&#8635;</button>
+                            <input type="number" class="form-control" :class="bgClass(tester.pwm_freq_hz)"
+                                   x-model="tester.pwm_freq_hz.draft" min="50" max="400">
+                            <button class="btn btn-outline-success" @click="acceptNum(tester.pwm_freq_hz, 50, 400)">&#10003;</button>
+                        </div>
+
+                        <div class="row">
+                            <template x-for="side in ['hatch_servo', 'brake_servo']" :key="side">
+                                <div class="col-md-6" :class="side === 'brake_servo' ? 'servo-col-right' : ''">
+                                    <div class="servo-col-title mb-2" x-text="t(side)"></div>
+
+                                    <div class="row g-2 mb-2">
+                                        <div class="col-4">
+                                            <label class="form-label small fw-semibold" x-text="t('range')"></label>
+                                            <div class="input-group input-group-sm">
+                                                <button class="btn btn-outline-secondary" @click="resetF(tester[side].range_deg)">&#8635;</button>
+                                                <select class="form-select" :class="bgClass(tester[side].range_deg)" x-model="tester[side].range_deg.draft">
+                                                    <option value="180">180&#176;</option>
+                                                    <option value="270">270&#176;</option>
+                                                    <option value="360">360&#176;</option>
+                                                </select>
+                                                <button class="btn btn-outline-success" @click="acceptSelect(tester[side].range_deg)">&#10003;</button>
+                                            </div>
+                                        </div>
+                                        <div class="col-4">
+                                            <label class="form-label small fw-semibold" x-text="t('direction')"></label>
+                                            <div class="input-group input-group-sm">
+                                                <button class="btn btn-outline-secondary" @click="resetF(tester[side].direction)">&#8635;</button>
+                                                <select class="form-select" :class="bgClass(tester[side].direction)" x-model="tester[side].direction.draft">
+                                                    <option value="neg" x-text="t('dir_neg')"></option>
+                                                    <option value="pos" x-text="t('dir_pos')"></option>
+                                                </select>
+                                                <button class="btn btn-outline-success" @click="acceptStrSelect(tester[side].direction)">&#10003;</button>
+                                            </div>
+                                        </div>
+                                        <div class="col-4">
+                                            <label class="form-label small fw-semibold" x-text="t('speed')"></label>
+                                            <div class="input-group input-group-sm">
+                                                <button class="btn btn-outline-secondary" @click="resetF(tester[side].speed_deg_per_s)">&#8635;</button>
+                                                <input type="number" class="form-control" :class="bgClass(tester[side].speed_deg_per_s)"
+                                                       x-model="tester[side].speed_deg_per_s.draft" min="30" max="180">
+                                                <button class="btn btn-outline-success" @click="acceptNum(tester[side].speed_deg_per_s, 30, 180)">&#10003;</button>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="row g-2 mb-2">
+                                        <div class="col-6">
+                                            <label class="form-label small fw-semibold" x-text="t('pulse_at') + ' 0&#176;'"></label>
+                                            <div class="input-group input-group-sm">
+                                                <button class="btn btn-outline-secondary" @click="resetF(tester[side].pulse_min_us)">&#8635;</button>
+                                                <input type="number" class="form-control" :class="bgClass(tester[side].pulse_min_us)"
+                                                       x-model="tester[side].pulse_min_us.draft" min="500" max="4000">
+                                                <button class="btn btn-outline-success" @click="acceptNum(tester[side].pulse_min_us, 500, 4000)">&#10003;</button>
+                                            </div>
+                                        </div>
+                                        <div class="col-6">
+                                            <label class="form-label small fw-semibold" x-text="t('pulse_at') + ' ' + tester[side].range_deg.committed + '&#176;'"></label>
+                                            <div class="input-group input-group-sm">
+                                                <button class="btn btn-outline-secondary" @click="resetF(tester[side].pulse_max_us)">&#8635;</button>
+                                                <input type="number" class="form-control" :class="bgClass(tester[side].pulse_max_us)"
+                                                       x-model="tester[side].pulse_max_us.draft" min="500" max="4000">
+                                                <button class="btn btn-outline-success" @click="acceptNum(tester[side].pulse_max_us, 500, 4000)">&#10003;</button>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <div class="row g-2 mb-2">
+                                        <div class="col-6">
+                                            <label class="form-label small fw-semibold" x-text="t('hard_stop_min')"></label>
+                                            <div class="input-group input-group-sm">
+                                                <button class="btn btn-outline-secondary" @click="resetF(tester[side].hard_stop_min_deg)">&#8635;</button>
+                                                <input type="number" class="form-control" :class="bgClass(tester[side].hard_stop_min_deg)"
+                                                       x-model="tester[side].hard_stop_min_deg.draft" min="0" :max="tester[side].range_deg.committed">
+                                                <button class="btn btn-outline-success" @click="acceptNum(tester[side].hard_stop_min_deg, 0, tester[side].range_deg.committed)">&#10003;</button>
+                                            </div>
+                                        </div>
+                                        <div class="col-6">
+                                            <label class="form-label small fw-semibold" x-text="t('hard_stop_max')"></label>
+                                            <div class="input-group input-group-sm">
+                                                <button class="btn btn-outline-secondary" @click="resetF(tester[side].hard_stop_max_deg)">&#8635;</button>
+                                                <input type="number" class="form-control" :class="bgClass(tester[side].hard_stop_max_deg)"
+                                                       x-model="tester[side].hard_stop_max_deg.draft" min="0" :max="tester[side].range_deg.committed">
+                                                <button class="btn btn-outline-success" @click="acceptNum(tester[side].hard_stop_max_deg, 0, tester[side].range_deg.committed)">&#10003;</button>
+                                            </div>
+                                        </div>
+                                    </div>
+
+                                    <label class="form-label small fw-semibold" x-text="t('test_angle_a')"></label>
+                                    <div class="input-group input-group-sm mb-2">
+                                        <button class="btn btn-outline-secondary" @click="resetF(tester[side].test_angle_a_deg)">&#8635;</button>
+                                        <input type="number" class="form-control" :class="bgClass(tester[side].test_angle_a_deg)"
+                                               x-model="tester[side].test_angle_a_deg.draft"
+                                               :min="tester[side].hard_stop_min_deg.committed" :max="tester[side].hard_stop_max_deg.committed">
+                                        <button class="btn btn-outline-success"
+                                                @click="acceptNum(tester[side].test_angle_a_deg, tester[side].hard_stop_min_deg.committed, tester[side].hard_stop_max_deg.committed)">&#10003;</button>
+                                        <button class="btn btn-outline-info go-gap"
+                                                :disabled="tester[side].test_angle_a_deg.draft !== '' + tester[side].test_angle_a_deg.committed"
+                                                @click="testerMove(side === 'hatch_servo' ? 'hatch' : 'brake', tester[side].test_angle_a_deg.committed)">&#9654;</button>
+                                    </div>
+
+                                    <label class="form-label small fw-semibold" x-text="t('test_angle_b')"></label>
+                                    <div class="input-group input-group-sm mb-3">
+                                        <button class="btn btn-outline-secondary" @click="resetF(tester[side].test_angle_b_deg)">&#8635;</button>
+                                        <input type="number" class="form-control" :class="bgClass(tester[side].test_angle_b_deg)"
+                                               x-model="tester[side].test_angle_b_deg.draft"
+                                               :min="tester[side].hard_stop_min_deg.committed" :max="tester[side].hard_stop_max_deg.committed">
+                                        <button class="btn btn-outline-success"
+                                                @click="acceptNum(tester[side].test_angle_b_deg, tester[side].hard_stop_min_deg.committed, tester[side].hard_stop_max_deg.committed)">&#10003;</button>
+                                        <button class="btn btn-outline-info go-gap"
+                                                :disabled="tester[side].test_angle_b_deg.draft !== '' + tester[side].test_angle_b_deg.committed"
+                                                @click="testerMove(side === 'hatch_servo' ? 'hatch' : 'brake', tester[side].test_angle_b_deg.committed)">&#9654;</button>
+                                    </div>
+                                </div>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+        </div><!-- /accordion -->
     </div><!-- /container -->
 
     <!-- Loading indicator -->
     <div x-show="!loaded" class="text-center text-muted py-5">
         <div class="spinner-border mb-2" role="status"></div>
-        <div>Konfiguration wird geladen&hellip;</div>
+        <div x-text="t('loading')"></div>
     </div>
 
     <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js"
             onerror="this.onerror=null;this.src='/static/bootstrap.bundle.min.js'"></script>
     <script>
+    const I18N = {
+        de: {
+            back: '\u2190 Zur\u00fcck', title: '\u2699 Konfiguration', download: 'Herunterladen',
+            legend_reset: 'Zur\u00fccksetzen', legend_accept: '\u00dcbernehmen (wird sofort dauerhaft gespeichert)',
+            legend_go: 'Anfahren', legend_edited: 'editiert, noch nicht \u00fcbernommen',
+            name: 'Name', short_name: 'Kurzname (max. 11 Zeichen, OLED)',
+            pwm_freq: 'PWM-Frequenz (Hz)', this_channel: 'dieser Kanal',
+            hatch_servo: 'Hebelservo', brake_servo: 'Halteservo', channel: 'Kanal',
+            range: 'Stellbereich', direction: 'Drehrichtung', dir_pos: 'pos', dir_neg: 'neg',
+            speed: 'Geschwindigkeit (\u00b0/s)', pulse_at: 'Impulszeit bei',
+            hard_stop_min: 'Hard-Stop min (\u00b0)', hard_stop_max: 'Hard-Stop max (\u00b0)',
+            mount_angle: 'Montagewinkel (\u00b0)', brake_open: 'Bremse Auf (\u00b0)', brake_close: 'Bremse Zu (\u00b0)',
+            positions: 'Rastpositionen', add_pos: 'Zwischenposition', remove_pos: 'Zwischenposition',
+            servo_tester: 'Servotester',
+            servo_tester_hint: 'Nur f\u00fcr ausgebaute, unbelastete Servos. Die PWM-Frequenz ist unabh\u00e4ngig von den 4 Kan\u00e4len und wird nur aktiv, solange kein Kanal f\u00e4hrt.',
+            test_angle_a: 'Testwinkel A (\u00b0)', test_angle_b: 'Testwinkel B (\u00b0)',
+            loading: 'Konfiguration wird geladen\u2026',
+        },
+        en: {
+            back: '\u2190 Back', title: '\u2699 Configuration', download: 'Download',
+            legend_reset: 'Reset', legend_accept: 'Accept (saved immediately, permanently)',
+            legend_go: 'Move', legend_edited: 'edited, not yet accepted',
+            name: 'Name', short_name: 'Short name (max. 11 chars, OLED)',
+            pwm_freq: 'PWM frequency (Hz)', this_channel: 'this channel',
+            hatch_servo: 'Lever servo', brake_servo: 'Latch servo', channel: 'channel',
+            range: 'Range', direction: 'Direction', dir_pos: 'pos', dir_neg: 'neg',
+            speed: 'Speed (\u00b0/s)', pulse_at: 'Pulse width at',
+            hard_stop_min: 'Hard stop min (\u00b0)', hard_stop_max: 'Hard stop max (\u00b0)',
+            mount_angle: 'Mounting angle (\u00b0)', brake_open: 'Latch open (\u00b0)', brake_close: 'Latch closed (\u00b0)',
+            positions: 'Positions', add_pos: 'intermediate position', remove_pos: 'intermediate position',
+            servo_tester: 'Servo tester',
+            servo_tester_hint: 'For servos removed from the hatches only. The PWM frequency is independent of the 4 channels and only active while no channel is driving.',
+            test_angle_a: 'Test angle A (\u00b0)', test_angle_b: 'Test angle B (\u00b0)',
+            loading: 'Loading configuration\u2026',
+        },
+    };
+
     function configApp() {
         return {
             loaded:   false,
             errorMsg: '',
-            hs:       {},   // hatch_servo (global, all 4 hatches)
-            bs:       {},   // brake_servo (global, all 4 hatches)
+            lang:     (navigator.language || 'de').slice(0, 2) === 'en' ? 'en' : 'de',
             hatches:  [],
+            tester:   {},
+
+            t(key) {
+                return (I18N[this.lang] && I18N[this.lang][key]) || key;
+            },
 
             /* ----------------------------------------------------------------
                Field factory: wraps a committed value plus an editable draft.
-               Acceptance persists immediately - there is no separate
-               "accepted but not yet saved" state anymore.
             ---------------------------------------------------------------- */
             fld(committed) {
                 return { committed, draft: '' + committed };
+            },
+
+            /* ----------------------------------------------------------------
+               Wrap/unwrap a full hatch_servo or brake_servo config block.
+               extraKeys covers the fields that differ between hatch_servo,
+               brake_servo and the servo tester's own blocks (mount_angle_deg,
+               open_deg/close_deg, test_angle_a/b_deg).
+            ---------------------------------------------------------------- */
+            fldServo(cfg, extraKeys = []) {
+                const obj = {
+                    range_deg:         this.fld(cfg.range_deg),
+                    direction:         this.fld(cfg.direction),
+                    speed_deg_per_s:   this.fld(cfg.speed_deg_per_s),
+                    pulse_min_us:      this.fld(cfg.pulse_min_us),
+                    pulse_max_us:      this.fld(cfg.pulse_max_us),
+                    hard_stop_min_deg: this.fld(cfg.hard_stop_min_deg),
+                    hard_stop_max_deg: this.fld(cfg.hard_stop_max_deg),
+                };
+                for (const k of extraKeys) obj[k] = this.fld(cfg[k]);
+                return obj;
+            },
+
+            servoOut(f, extraKeys = []) {
+                const obj = {
+                    range_deg:         f.range_deg.committed,
+                    direction:         f.direction.committed,
+                    speed_deg_per_s:   f.speed_deg_per_s.committed,
+                    pulse_min_us:      f.pulse_min_us.committed,
+                    pulse_max_us:      f.pulse_max_us.committed,
+                    hard_stop_min_deg: f.hard_stop_min_deg.committed,
+                    hard_stop_max_deg: f.hard_stop_max_deg.committed,
+                };
+                for (const k of extraKeys) obj[k] = f[k].committed;
+                return obj;
             },
 
             /* ----------------------------------------------------------------
@@ -297,9 +580,7 @@
             },
 
             /* ----------------------------------------------------------------
-               Persist the full current document to the device. Called after
-               every single field acceptance and every position add/remove.
-               Returns true on success, false on failure (caller reverts).
+               Persist the full current document to the device.
             ---------------------------------------------------------------- */
             async persistConfig() {
                 try {
@@ -309,21 +590,15 @@
                         body:    JSON.stringify(this.buildConfig()),
                     });
                     const d = await r.json();
-                    if (d.error) {
-                        this.errorMsg = 'Fehler: ' + d.error;
-                        return false;
-                    }
+                    if (d.error) { this.errorMsg = 'Error: ' + d.error; return false; }
                     this.errorMsg = '';
                     return true;
                 } catch (_) {
-                    this.errorMsg = 'Netzwerkfehler beim Speichern.';
+                    this.errorMsg = 'Network error while saving.';
                     return false;
                 }
             },
 
-            /* ----------------------------------------------------------------
-               Accept / reset helpers - accepting now persists immediately
-            ---------------------------------------------------------------- */
             async acceptNum(f, min, max) {
                 const v = Number(f.draft);
                 if (!Number.isFinite(v) || v < min || v > max) return;
@@ -337,7 +612,7 @@
                 if (!v || v.length > maxLen) return;
                 const prev = f.committed;
                 f.committed = v;
-                f.draft     = v;   // normalise whitespace in the box
+                f.draft     = v;
                 if (!await this.persistConfig()) { f.committed = prev; f.draft = prev; }
             },
 
@@ -348,31 +623,29 @@
                 if (!await this.persistConfig()) f.committed = prev;
             },
 
+            async acceptStrSelect(f) {
+                const v = f.draft;
+                const prev = f.committed;
+                f.committed = v;
+                if (!await this.persistConfig()) f.committed = prev;
+            },
+
             resetF(f) {
                 f.draft = '' + f.committed;
             },
 
-            /* ----------------------------------------------------------------
-               Position label: ZU / P2 … / AUF
-            ---------------------------------------------------------------- */
             posLabel(idx, total) {
                 if (idx === 0)          return 'ZU';
                 if (idx === total - 1)  return 'AUF';
                 return 'P' + (idx + 1);
             },
 
-            /* ----------------------------------------------------------------
-               Dynamic position management. positions[0] (ZU) and
-               positions[length-1] (AUF) are the fixed end-stops and are
-               never displaced - only intermediate positions are inserted
-               before AUF / removed from just before AUF.
-            ---------------------------------------------------------------- */
             async addPos(hi) {
                 const h   = this.hatches[hi];
                 const n   = h.positions.length;
-                const idx = n - 1;  // insert directly before AUF
+                const idx = n - 1;
                 const aufVal    = h.positions[n - 1].committed;
-                const beforeVal = h.positions[n - 2].committed;  // last intermediate, or ZU
+                const beforeVal = h.positions[n - 2].committed;
                 const mid = Math.round((beforeVal + aufVal) / 2);
                 h.positions.splice(idx, 0, this.fld(mid));
                 if (!await this.persistConfig()) h.positions.splice(idx, 1);
@@ -381,23 +654,47 @@
             async removePos(hi) {
                 const h = this.hatches[hi];
                 if (h.positions.length <= 2) return;
-                const idx = h.positions.length - 2;  // last intermediate position
+                const idx = h.positions.length - 2;
                 const [removed] = h.positions.splice(idx, 1);
                 if (!await this.persistConfig()) h.positions.splice(idx, 0, removed);
             },
 
             /* ----------------------------------------------------------------
-               Test move: send accepted angle directly to task_control.
-               No apply step needed - accepted values are already persisted
-               and active in RAM by the time this can be clicked (the ▶
-               button is disabled while a draft is unaccepted).
+               Movement triggers - fire and forget, task_control does the work
             ---------------------------------------------------------------- */
             testMove(hi, hatch_deg) {
                 fetch('/api/hatch/' + hi + '/test', {
-                    method:  'POST',
-                    headers: {'Content-Type': 'application/json'},
-                    body:    JSON.stringify({ hatch_deg }),
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ hatch_deg }),
                 });
+            },
+
+            brakeTestMove(hi, brake_deg) {
+                fetch('/api/hatch/' + hi + '/brake_test', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ brake_deg }),
+                });
+            },
+
+            testerMove(which, angle_deg) {
+                fetch('/api/tester/' + which, {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({ angle_deg }),
+                });
+            },
+
+            /* ----------------------------------------------------------------
+               Download the currently persisted configuration as a file
+            ---------------------------------------------------------------- */
+            downloadConfig() {
+                const blob = new Blob([JSON.stringify(this.buildConfig(), null, 4)],
+                                       {type: 'application/json'});
+                const url = URL.createObjectURL(blob);
+                const a   = document.createElement('a');
+                a.href = url;
+                a.download = 'config.json';
+                a.click();
+                URL.revokeObjectURL(url);
             },
 
             /* ----------------------------------------------------------------
@@ -406,26 +703,19 @@
             buildConfig() {
                 return {
                     global: {
-                        hatch_servo: {
-                            range_deg:         this.hs.range_deg.committed,
-                            pulse_min_us:      this.hs.pulse_min_us.committed,
-                            pulse_max_us:      this.hs.pulse_max_us.committed,
-                            hard_stop_min_deg: this.hs.hard_stop_min_deg.committed,
-                            hard_stop_max_deg: this.hs.hard_stop_max_deg.committed,
-                            speed_deg_per_s:   this.hs.speed_deg_per_s.committed,
-                        },
-                        brake_servo: {
-                            range_deg:    this.bs.range_deg.committed,
-                            pulse_min_us: this.bs.pulse_min_us.committed,
-                            pulse_max_us: this.bs.pulse_max_us.committed,
+                        servo_tester: {
+                            pwm_freq_hz: this.tester.pwm_freq_hz.committed,
+                            hatch_servo: this.servoOut(this.tester.hatch_servo, ['test_angle_a_deg', 'test_angle_b_deg']),
+                            brake_servo: this.servoOut(this.tester.brake_servo, ['test_angle_a_deg', 'test_angle_b_deg']),
                         },
                     },
                     hatches: this.hatches.map(h => ({
-                        name:            h.name.committed,
-                        short_name:      h.short_name.committed,
-                        brake_open_deg:  h.brake_open_deg.committed,
-                        brake_close_deg: h.brake_close_deg.committed,
-                        positions:       h.positions.map(p => ({ hatch_deg: p.committed })),
+                        name:        h.name.committed,
+                        short_name:  h.short_name.committed,
+                        pwm_freq_hz: h.pwm_freq_hz.committed,
+                        hatch_servo: this.servoOut(h.hatch_servo, ['mount_angle_deg']),
+                        brake_servo: this.servoOut(h.brake_servo, ['mount_angle_deg', 'open_deg', 'close_deg']),
+                        positions:   h.positions.map(p => ({ hatch_deg: p.committed })),
                     })),
                 };
             },
@@ -437,32 +727,24 @@
                 fetch('/api/config')
                     .then(r => r.json())
                     .then(cfg => {
-                        const HS = cfg.global.hatch_servo;
-                        const BS = cfg.global.brake_servo;
-                        this.hs = {
-                            range_deg:         this.fld(HS.range_deg),
-                            pulse_min_us:      this.fld(HS.pulse_min_us),
-                            pulse_max_us:      this.fld(HS.pulse_max_us),
-                            hard_stop_min_deg: this.fld(HS.hard_stop_min_deg),
-                            hard_stop_max_deg: this.fld(HS.hard_stop_max_deg),
-                            speed_deg_per_s:   this.fld(HS.speed_deg_per_s),
-                        };
-                        this.bs = {
-                            range_deg:    this.fld(BS.range_deg),
-                            pulse_min_us: this.fld(BS.pulse_min_us),
-                            pulse_max_us: this.fld(BS.pulse_max_us),
+                        const st = cfg.global.servo_tester;
+                        this.tester = {
+                            pwm_freq_hz: this.fld(st.pwm_freq_hz),
+                            hatch_servo: this.fldServo(st.hatch_servo, ['test_angle_a_deg', 'test_angle_b_deg']),
+                            brake_servo: this.fldServo(st.brake_servo, ['test_angle_a_deg', 'test_angle_b_deg']),
                         };
                         this.hatches = cfg.hatches.map(h => ({
-                            name:            this.fld(h.name),
-                            short_name:      this.fld(h.short_name),
-                            brake_open_deg:  this.fld(h.brake_open_deg),
-                            brake_close_deg: this.fld(h.brake_close_deg),
-                            positions:       h.positions.map(p => this.fld(p.hatch_deg)),
+                            name:        this.fld(h.name),
+                            short_name:  this.fld(h.short_name),
+                            pwm_freq_hz: this.fld(h.pwm_freq_hz),
+                            hatch_servo: this.fldServo(h.hatch_servo, ['mount_angle_deg']),
+                            brake_servo: this.fldServo(h.brake_servo, ['mount_angle_deg', 'open_deg', 'close_deg']),
+                            positions:   h.positions.map(p => this.fld(p.hatch_deg)),
                         }));
                         this.loaded = true;
                     })
                     .catch(() => {
-                        this.errorMsg = 'Konfiguration konnte nicht geladen werden.';
+                        this.errorMsg = 'Configuration could not be loaded.';
                     });
             },
         };

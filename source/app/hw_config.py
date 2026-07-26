@@ -33,30 +33,44 @@ BTN_LONG_PRESS_MS     = 3_000      # hold duration to trigger long-press action 
 # -----------------------------------------------------------------------------
 # PCA9685 PWM driver
 # -----------------------------------------------------------------------------
-PCA9685_FREQ_HZ = 50  # standard servo frequency
+# Boot-time default frequency, set once in hw_init.py before any config is
+# loaded. From then on, task_control reprograms the chip's single PRE_SCALE
+# register to each hatch's/the tester's own pwm_freq_hz immediately before
+# driving it - see task_control._ensure_pwm_freq(). The PCA9685 has exactly
+# one frequency register for all 16 channels; per-channel frequency is not
+# possible in hardware.
+PCA9685_FREQ_HZ = 50
 
-# Servo pulse width range in microseconds.
-# Extended range servos: adjust SERVO_MIN_US / SERVO_MAX_US to match your hardware.
-# Standard:  1000–2000 µs
-# Extended:  500–2500 µs (conservative default covering most extended-range servos)
+# Servo pulse width range in microseconds. Absolute hardware envelope -
+# config.json's per-servo pulse_min_us/pulse_max_us must lie within this,
+# regardless of servo type. Covers standard (1000-2000µs), extended-range
+# (500-2500µs) and some long-throw servos (up to 4000µs).
 SERVO_MIN_US = 500
-SERVO_MAX_US = 2500
-SERVO_RANGE_DEG_MAX = 270  # widest allowed value for global.*.range_deg (180 or 270);
-                            # used as an absolute sanity bound when validating
-                            # degree values in state.json independent of config.json
+SERVO_MAX_US = 4000
+
+# Allowed values for config.json's per-servo range_deg (mechanical travel).
+RANGE_DEG_OPTIONS   = (180, 270, 360)
+SERVO_RANGE_DEG_MAX = 360  # widest allowed range_deg; used as an absolute
+                            # sanity bound when validating degree values in
+                            # state.json independent of config.json
+
+# Allowed values for config.json's per-servo speed_deg_per_s.
+SPEED_MIN_DEG_PER_S = 30
+SPEED_MAX_DEG_PER_S = 180
+
+# Allowed values for config.json's per-channel/tester pwm_freq_hz.
+PWM_FREQ_MIN_HZ = 50
+PWM_FREQ_MAX_HZ = 400
+
 FAILSAFE_DEG = -1    # sentinel: actual or target position unknown (fail-safe state)
 
-# Fixed drive-train direction: applies identically to hatch and brake
-# servos. See shared/servo_units.py for the conversion formula.
-SERVO_DIRECTION_REVERSED = True
-
-HATCH_MIN_STEP_MS = 15  # practical minimum ramp step interval in ms; must
-                          # reliably exceed the real-world uasyncio scheduling
-                          # + I2C write overhead (multiple concurrent tasks),
-                          # otherwise the actual speed falls far short of the
-                          # configured speed_deg_per_s. The step size in µs is
-                          # derived from this floor at move time (see
-                          # task_control._compute_step()), not fixed.
+MIN_STEP_MS = 15  # practical minimum ramp step interval in ms, for both the
+                    # hatch and the brake servo ramp; must reliably exceed
+                    # the real-world uasyncio scheduling + I2C write overhead
+                    # (multiple concurrent tasks), otherwise the actual speed
+                    # falls far short of the configured speed_deg_per_s. The
+                    # step size in µs is derived from this floor at move time
+                    # (see task_control._compute_step()), not fixed.
 
 # PCA9685 channel assignments
 # Each hatch uses two servos: hatch (movement) and brake (locking mechanism)
@@ -69,10 +83,16 @@ PCA9685_CH = {
     3: (6, 7),
 }
 
+# Servo tester: next free channel pair after the 4 hatches, permanently
+# powered (no relay), used to test servos on the bench before assembly.
+TESTER_CH = (8, 9)  # (hatch_servo_channel, brake_servo_channel)
+
 # -----------------------------------------------------------------------------
 # Grove 4-channel relay
 # Channel assignment: one relay per hatch, switches +8V to both servos of that hatch.
 # NO contact used: relay energised → contact closed → servos powered.
+# The servo tester (TESTER_CH) has no relay - it is permanently powered by
+# design, since it is only ever used with servos removed from the hatches.
 # -----------------------------------------------------------------------------
 RELAY_CH = {
     # hatch_index: relay_channel

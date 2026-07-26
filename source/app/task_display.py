@@ -179,7 +179,7 @@ def _refresh(wri, config, state, targets):
     wri.device.fill(0)
 
     for i in range(len(targets)):
-        short  = config["hatches"][i]["short_name"][:6]
+        short  = config["hatches"][i]["short_name"][:11]
         status = _status_text(i, state, targets, config, _spin_frame)
         # Status always occupies the last 4 columns of the 16-char line,
         # preceded by exactly one blank column; the short name gets all

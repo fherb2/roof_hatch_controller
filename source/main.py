@@ -12,11 +12,11 @@ Startup sequence:
             Device resets after the user saves new credentials.
   Stage 2:  Remaining hardware init (PCA9685, relay, button).
   Stage 2b: Load config.json and state.json.  On WDT reset, mark all
-            hatches as FAILSAFE_US in state after the physical
+            hatches as FAILSAFE_DEG in state after the physical
             fail-safe sequence has already run in Stage 0.
   Stage 3:  Wi-Fi client mode.
-  Stage 4:  Build targets dict from persisted Soll values and start all
-            async tasks via uasyncio.gather().
+  Stage 4:  Build the targets dict from persisted Soll values and start
+            all async tasks via uasyncio.gather().
 """
 
 import gc
@@ -150,7 +150,9 @@ async def main():
     if wdt_reset:
         # Physical fail-safe has already run in Stage 0. Now mark all
         # hatches as FAILSAFE_DEG so state.json matches the physical
-        # reality: positions are unknown, hatches are unlocked.
+        # reality: positions are unknown, hatches are unlocked. The
+        # servo tester has no fail-safe concept (never moves on its
+        # own) and is left untouched.
         for h in state["hatches"]:
             h["hatch_deg"]  = FAILSAFE_DEG
             h["target_deg"] = FAILSAFE_DEG
@@ -165,7 +167,11 @@ async def main():
     # ------------------------------------------------------------------
     # Stage 4: Launch async tasks
     # ------------------------------------------------------------------
-    targets = [{"hatch_deg": h["target_deg"]} for h in state["hatches"]]
+    targets = {
+        "hatches":    [{"hatch_deg": h["target_deg"]} for h in state["hatches"]],
+        "brake_only": [None for _ in state["hatches"]],
+        "tester":     {"hatch_deg": None, "brake_deg": None},
+    }
     _boot_status(display, 6, "Starting...")
     await uasyncio.gather(
         task_watchdog(),

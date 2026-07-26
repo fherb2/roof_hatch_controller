@@ -1,17 +1,23 @@
 # task_webserver.py - Async task: microdot web server
 #
 # Routes:
-#   GET  /                    → index.html  (main control page)
-#   GET  /config              → config.html (requires active session)
-#   GET  /ap                  → ap_setup.html
-#   GET  /static/<path>       → static files (CSS, JS)
-#   GET  /sse                 → SSE live status stream
-#   GET  /api/config          → current config as JSON
-#   POST /api/hatch/<i>/pos   → set hatch target by position index
-#   POST /api/hatch/<i>/test  → test move to exact degrees (session required)
-#   POST /api/config          → validate + persist config immediately, no restart
-#   POST /api/wifi            → save Wi-Fi credentials, then restart
-#   GET  /api/wifi/scan       → scan available SSIDs, return JSON list
+#   GET  /                       → index.html  (main control page)
+#   GET  /config                 → config.html (requires active session)
+#   GET  /ap                     → ap_setup.html
+#   GET  /static/<path>          → static files (CSS, JS)
+#   GET  /sse                    → SSE live status stream
+#   GET  /api/config             → current config as JSON
+#   POST /api/hatch/<i>/pos      → set hatch target by position index
+#   POST /api/hatch/<i>/test     → test move hatch servo to exact degrees
+#                                   (full sequence; also used for the hatch
+#                                   servo's mounting angle) (session required)
+#   POST /api/hatch/<i>/brake_test → move only the brake servo directly to
+#                                   exact degrees (mounting angle) (session required)
+#   POST /api/tester/hatch       → move servo tester hatch output (session required)
+#   POST /api/tester/brake       → move servo tester brake output (session required)
+#   POST /api/config             → validate + persist config immediately, no restart
+#   POST /api/wifi                → save Wi-Fi credentials, then restart
+#   GET  /api/wifi/scan           → scan available SSIDs, return JSON list
 
 import uasyncio
 import ujson
@@ -63,6 +69,9 @@ def _build_status():
     FAILSAFE_DEG (-1), meaning the hatch is in an unverified closed state
     after a fail-safe sequence.  In that case pos_idx is null and no
     position button is highlighted as active in the web UI.
+
+    Carries no servo tester fields - the tester has no automatic "moving"
+    concept, config.html reads its values directly from GET /api/config.
     """
     if not _config or "hatches" not in _config:
         return {"hatches": [], "wifi": {"connected": False, "ip": ""},
@@ -70,7 +79,7 @@ def _build_status():
     hatches = []
     for i in range(NUM_HATCHES):
         s         = _state["hatches"][i]
-        t         = _targets[i]
+        t         = _targets["hatches"][i]
         positions = _config["hatches"][i]["positions"]
         hatches.append({
             "name":          _config["hatches"][i]["name"],
@@ -198,7 +207,7 @@ async def set_position(request, idx):
         return _json({'error': 'invalid position_idx'}, 400)
 
     new_deg = positions[pos_idx]["hatch_deg"]
-    _targets[idx]["hatch_deg"] = new_deg
+    _targets["hatches"][idx]["hatch_deg"] = new_deg
     _state["hatches"][idx]["target_deg"] = new_deg
     save_state(_state)
     return _json({'ok': True})
@@ -206,12 +215,15 @@ async def set_position(request, idx):
 
 @app.route('/api/hatch/<idx>/test', methods=['POST'])
 async def test_position(request, idx):
-    """Move hatch to an exact angle in degrees for visual calibration.
+    """Move hatch servo to an exact angle in degrees for visual calibration.
 
-    Requires an active config session.  Sets the RAM target (triggering
+    Requires an active config session. Sets the RAM target (triggering
     task_control to run the full brake-open → move → brake-close
-    sequence) and persists the target to state.json.  The value must lie
-    within [hard_stop_min_deg, hard_stop_max_deg] from config.
+    sequence) and persists the target to state.json. The value must lie
+    within this hatch's own [hard_stop_min_deg, hard_stop_max_deg] from
+    config. Also used, unchanged, for the hatch servo's mounting angle -
+    the mounting angle is just another degree value the client already
+    knows, not looked up from the positions list.
     """
     if not session.is_session_active():
         return _json({'error': 'not authorized'}, 403)
@@ -225,13 +237,77 @@ async def test_position(request, idx):
         return _json({'error': 'missing hatch_deg'}, 400)
 
     hatch_deg = int(body['hatch_deg'])
-    hs        = _config["global"]["hatch_servo"]
+    hs        = _config["hatches"][idx]["hatch_servo"]
     if not hs["hard_stop_min_deg"] <= hatch_deg <= hs["hard_stop_max_deg"]:
         return _json({'error': 'hatch_deg outside hardstop range'}, 400)
 
-    _targets[idx]["hatch_deg"] = hatch_deg
+    _targets["hatches"][idx]["hatch_deg"] = hatch_deg
     _state["hatches"][idx]["target_deg"] = hatch_deg
     save_state(_state)
+    return _json({'ok': True})
+
+
+@app.route('/api/hatch/<idx>/brake_test', methods=['POST'])
+async def brake_test(request, idx):
+    """Move only the brake servo of one hatch directly (mounting angle).
+
+    Requires an active config session. Sets targets["brake_only"][idx],
+    which task_control picks up and clears again once the move (success
+    or failure) has completed - see task_control._move_brake_only(). The
+    hatch servo of the same hatch is powered but held steady, not moved.
+    No state is persisted here directly; _move_brake_only() does that
+    itself once the move actually completes.
+    """
+    if not session.is_session_active():
+        return _json({'error': 'not authorized'}, 403)
+
+    idx = int(idx)
+    if not 0 <= idx < NUM_HATCHES:
+        return _json({'error': 'invalid hatch index'}, 400)
+
+    body = request.json
+    if body is None or 'brake_deg' not in body:
+        return _json({'error': 'missing brake_deg'}, 400)
+
+    brake_deg = int(body['brake_deg'])
+    bs        = _config["hatches"][idx]["brake_servo"]
+    if not bs["hard_stop_min_deg"] <= brake_deg <= bs["hard_stop_max_deg"]:
+        return _json({'error': 'brake_deg outside hardstop range'}, 400)
+
+    _targets["brake_only"][idx] = brake_deg
+    return _json({'ok': True})
+
+
+# ---------------------------------------------------------------------------
+# API: servo tester
+# ---------------------------------------------------------------------------
+
+@app.route('/api/tester/<which>', methods=['POST'])
+async def tester_move(request, which):
+    """Move one of the two servo tester outputs (no relay, permanently
+    powered - see hw_config.TESTER_CH).
+
+    Requires an active config session. <which> must be "hatch" or
+    "brake". Sets targets["tester"][f"{which}_deg"], which task_control
+    picks up and clears again once the move has completed - see
+    task_control._move_tester_servo().
+    """
+    if not session.is_session_active():
+        return _json({'error': 'not authorized'}, 403)
+
+    if which not in ("hatch", "brake"):
+        return _json({'error': 'invalid tester output'}, 400)
+
+    body = request.json
+    if body is None or 'angle_deg' not in body:
+        return _json({'error': 'missing angle_deg'}, 400)
+
+    angle_deg = int(body['angle_deg'])
+    servo_cfg = _config["global"]["servo_tester"][f"{which}_servo"]
+    if not servo_cfg["hard_stop_min_deg"] <= angle_deg <= servo_cfg["hard_stop_max_deg"]:
+        return _json({'error': 'angle_deg outside hardstop range'}, 400)
+
+    _targets["tester"][f"{which}_deg"] = angle_deg
     return _json({'ok': True})
 
 
@@ -276,8 +352,10 @@ async def post_config(request):
         return _json({'error': f'write failed: {e}'}, 500)
 
     # Update in place so task_control and task_display see the change
-    # immediately without needing a reference swap.
-    _config["global"].update(new_cfg["global"])
+    # immediately without needing a reference swap. Each hatch_servo/
+    # brake_servo/positions/servo_tester value is replaced wholesale
+    # since the client always sends the complete current document.
+    _config["global"]["servo_tester"].update(new_cfg["global"]["servo_tester"])
     for i, h in enumerate(new_cfg["hatches"]):
         _config["hatches"][i].update(h)
 
