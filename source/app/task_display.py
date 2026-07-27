@@ -16,20 +16,39 @@
 # screen (moire banding when filming it with a phone camera at scanning
 # distance), from repeatedly blanking and rebuilding the same QR code.
 #
+# While a hatch is actually moving, its status field DOES change every
+# cycle (the rotating spinner) - the fingerprint-skip above can't help
+# there. To still avoid a full 1024-byte screen transfer for a 4-character
+# animation, _refresh() additionally does a PARTIAL, windowed redraw
+# whenever only the trailing status field of one row changed (see
+# _redraw_status_region()/_show_region()): the SSD1306 controller lets
+# the column/page address window be restricted to an arbitrary rectangle
+# via SET_COL_ADDR (0x21) / SET_PAGE_ADDR (0x22) - the standard ssd1306
+# driver's show() just never uses this, it always addresses the full
+# 128x64 area. For a 4-character, 16px-tall field that means transferring
+# 64 bytes instead of 1024, at the cost of a handful of extra 2-byte
+# command writes. This bypasses ssd1306.SSD1306_I2C.show() and talks to
+# its write_cmd()/write_data() primitives directly, and assumes the
+# standard page-major (MONO_VLSB) buffer layout
+# (display.buffer[page * display.width + x]) that the common
+# micropython-lib ssd1306 driver uses - if a different driver version is
+# ever used, _show_region() would need re-checking.
+#
 # _last_drawn holds a fingerprint of whatever is currently actually shown
 # on the display (including which of the two screens - status or QR - is
-# active), and both _refresh() and _render_qr() skip their I2C work
-# entirely when the fingerprint they would draw matches it. Because the
-# fingerprint includes the screen mode, switching between status and QR
-# always forces a redraw even if the two screens coincidentally examine
-# unchanged data - it forces a redraw purely because content actually
-# visible on the panel is different from what's on screen right now.
+# active); _last_lines additionally caches the exact 4 status lines last
+# drawn, so a per-row comparison can tell a spinner-only change apart from
+# a change that needs a full redraw (short_name edited, session state
+# toggled, or switching in from the QR screen).
 #
 # Normal display layout (128x64, 4 hatch status lines using a larger
 # 14px-high monospace font via the Writer class - see lib/writer.py and
 # lib/font_hatch_status.py):
-#   Line 0-3: hatch status "<short_name> <status>", 16px pitch each,
-#             filling the full 64px height.
+#   Line 0-3: "<short_name:11> <status:4>", 16px pitch each (2 pages of
+#             8px each per line), filling the full 64px height. The
+#             status field always occupies columns 96-127 (the last 4 of
+#             16 characters at 8px/character) - this fixed position is
+#             what _redraw_status_region() relies on.
 #
 # QR-code layout (shown for 15s after a short button press):
 #   Top 48px:    QR code (scale 1px/module, 4px quiet zone)
@@ -54,10 +73,15 @@ _qr_cache_matrix = None  # cached matrix to avoid regenerating on every refresh
 
 _last_drawn = None  # fingerprint of whatever is currently physically shown
                      # on the display - see module docstring
+_last_lines = None  # the 4 status line strings behind the last "status"
+                     # fingerprint, for the per-row partial-redraw check;
+                     # meaningless whenever _last_drawn isn't a "status" one
 
 _REFRESH_MS     = 500  # display refresh interval in milliseconds
 _LINE_HEIGHT_PX = 16   # px per hatch status line; 4 lines exactly fill 64px
 _IP_LINE_PX     = 16   # px reserved at the bottom of the QR screen for the IP text
+_STATUS_COL_PX  = 12 * 8  # column where the 4-char status field starts
+                           # (11 short_name chars + 1 space, 8px/char)
 
 _SPIN_FRAMES = ["|", "/", "-", "\\"]  # rotating-stroke animation while moving
 
@@ -118,6 +142,65 @@ def _current_ip():
         return ap.ifconfig()[0]
 
     return None
+
+
+def _show_region(display, x0, x1, page0, page1):
+    """Write only a rectangular sub-region of the framebuffer to the
+    SSD1306 panel, instead of display.show()'s full 128x64 transfer.
+
+    Uses the controller's column/page address window commands directly
+    (0x21 SET_COL_ADDR, 0x22 SET_PAGE_ADDR) via the driver's own
+    write_cmd()/write_data() primitives, then extracts just the affected
+    bytes from the driver's framebuffer (page-major MONO_VLSB layout:
+    one byte per column covers 8 vertical pixels, buffer index =
+    page * display.width + x). See module docstring for why this exists
+    and what it depends on.
+
+    Args:
+        display: SSD1306_I2C instance (must expose .write_cmd(),
+                 .write_data(), .buffer, .width).
+        x0, x1:  inclusive column range (0-127).
+        page0, page1: inclusive page range (0-7 for a 64px-tall panel).
+    """
+    display.write_cmd(0x21)
+    display.write_cmd(x0)
+    display.write_cmd(x1)
+    display.write_cmd(0x22)
+    display.write_cmd(page0)
+    display.write_cmd(page1)
+
+    width = x1 - x0 + 1
+    data  = bytearray(width * (page1 - page0 + 1))
+    idx   = 0
+    for page in range(page0, page1 + 1):
+        start = page * display.width + x0
+        data[idx:idx + width] = display.buffer[start:start + width]
+        idx += width
+    display.write_data(data)
+
+
+def _redraw_status_region(wri, row, status_text):
+    """Redraw only the 4-character status field of one hatch row.
+
+    Clears just that 32x16px cell (to avoid ghosting between differently
+    shaped glyphs, e.g. spinner frames), draws the new text into the
+    framebuffer at that position, then transfers only that rectangle via
+    _show_region() rather than the whole screen.
+
+    Args:
+        wri:         Writer instance bound to the display.
+        row:         hatch index (0-3), also the display row.
+        status_text: the 4-character status string to draw.
+    """
+    display = wri.device
+    x0, x1  = _STATUS_COL_PX, 127
+    page0   = row * (_LINE_HEIGHT_PX // 8)
+    page1   = page0 + (_LINE_HEIGHT_PX // 8) - 1
+
+    display.fill_rect(x0, row * _LINE_HEIGHT_PX, x1 - x0 + 1, _LINE_HEIGHT_PX, 0)
+    Writer.set_textpos(display, row * _LINE_HEIGHT_PX, x0)
+    wri.printstring(status_text)
+    _show_region(display, x0, x1, page0, page1)
 
 
 def _render_qr(display):
@@ -191,8 +274,18 @@ def _render_qr(display):
 
 
 def _refresh(wri, config, state, targets):
-    """Redraw the status lines - but only if the display isn't already
-    showing exactly that (see module docstring for why).
+    """Redraw the status lines - but only what actually changed.
+
+    Three cases, cheapest first:
+      1. Nothing at all changed (fingerprint match) - do nothing.
+      2. We were already showing the status view at the same inversion
+         state, and only the trailing 4-character status field of one or
+         more rows changed (the common case while a hatch is moving -
+         the spinner, or a ZU/AUF/P.. swap at the end of a move) - redraw
+         just those small regions via _redraw_status_region().
+      3. Anything else changed (short_name edited, session state
+         toggled, or the previous screen was the QR code) - full redraw,
+         same as before.
 
     Inverted (negative) display indicates that the config session is
     reachable right now - either the 60s unlock window is open or the
@@ -205,7 +298,7 @@ def _refresh(wri, config, state, targets):
         wri: Writer instance bound to the display and font_hatch_status,
              created once in task_display() and reused on every refresh.
     """
-    global _spin_frame, _last_drawn
+    global _spin_frame, _last_drawn, _last_lines
 
     config_reachable = session.is_session_active() or session.is_unlock_active()
 
@@ -219,14 +312,49 @@ def _refresh(wri, config, state, targets):
     if fingerprint == _last_drawn:
         return
 
-    wri.device.invert(config_reachable)
-    wri.device.fill(0)
-    for i, line in enumerate(lines):
-        Writer.set_textpos(wri.device, i * _LINE_HEIGHT_PX, 0)
-        wri.printstring(line)
-    wri.device.show()
+    display = wri.device
+    # Was the previous draw the status view at the same inversion state?
+    # If not (previous was QR, or this is the very first draw, or the
+    # session state just changed), a full redraw is required regardless
+    # of how the individual lines compare.
+    can_do_partial = (
+        _last_drawn is not None
+        and _last_drawn[0] == "status"
+        and _last_drawn[1] == config_reachable
+        and _last_lines is not None
+    )
+
+    if not can_do_partial:
+        display.invert(config_reachable)
+        display.fill(0)
+        for i, line in enumerate(lines):
+            Writer.set_textpos(display, i * _LINE_HEIGHT_PX, 0)
+            wri.printstring(line)
+        display.show()
+    else:
+        need_full_redraw = False
+        rows_to_patch = []
+        for i, line in enumerate(lines):
+            if line == _last_lines[i]:
+                continue
+            if line[:_STATUS_COL_PX // 8] == _last_lines[i][:_STATUS_COL_PX // 8]:
+                rows_to_patch.append(i)
+            else:
+                need_full_redraw = True
+                break
+
+        if need_full_redraw:
+            display.fill(0)
+            for i, line in enumerate(lines):
+                Writer.set_textpos(display, i * _LINE_HEIGHT_PX, 0)
+                wri.printstring(line)
+            display.show()
+        else:
+            for i in rows_to_patch:
+                _redraw_status_region(wri, i, lines[i][_STATUS_COL_PX // 8:])
 
     _last_drawn = fingerprint
+    _last_lines = lines
     # Only advance the spinner once a redraw actually happened - it is
     # part of "lines" above, so a moving hatch always produces a fresh
     # fingerprint and therefore a redraw every cycle, same as before.
