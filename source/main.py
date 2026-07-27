@@ -48,10 +48,6 @@ from app.task_control import task_control
 from app.task_button import task_button
 from app.task_webserver import task_webserver
 
-# Number of status lines used during boot (reserved at top of display)
-_BOOT_LINES = 7
-
-
 def _boot_status(display, line, text, invert=False):
     """Write a status line to the OLED during the boot sequence.
 
@@ -104,18 +100,24 @@ async def main():
         await fatal_error(f"Display init failed: {e}")
 
     # ------------------------------------------------------------------
-    # Stage 2: Remaining hardware init
-    # ------------------------------------------------------------------
-    # ------------------------------------------------------------------
     # Stage 1b: AP mode – no hardware needed, device reboots after config
     # ------------------------------------------------------------------
     if AP_MODE:
         _boot_status(display, 1, "AP mode...")
         hw = HardwareBundle(i2c, None, None, display, None)
         await start_ap_mode(hw)
-        await task_webserver(hw, {}, {}, [])
+        # Empty but correctly shaped, in case a route is hit that expects
+        # the normal targets structure (e.g. accidental navigation to
+        # /config instead of /ap) - config is also {} here, so those
+        # routes would fail validation/lookup harmlessly instead of
+        # crashing with a TypeError on a plain list.
+        empty_targets = {"hatches": [], "brake_only": [], "tester": {"hatch_deg": None, "brake_deg": None}}
+        await task_webserver(hw, {}, {}, empty_targets)
         return  # unreachable, device resets after wifi save
 
+    # ------------------------------------------------------------------
+    # Stage 2: Remaining hardware init
+    # ------------------------------------------------------------------
     _boot_status(display, 1, "Init hardware...")
     try:
         hw = init_hardware(i2c=i2c, display=display)

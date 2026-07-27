@@ -1,16 +1,35 @@
 # task_display.py - Async task: OLED display updates
 #
-# Refreshes the display every _REFRESH_MS milliseconds.
+# Checks every _REFRESH_MS milliseconds whether the display content needs
+# to change, and only touches the I2C bus (fill/draw/show) when it
+# actually does. This matters for more than just efficiency: task_display
+# shares the I2C bus and the single-threaded event loop with task_control,
+# which drives the servos. A full redraw (framebuffer fill + Writer glyph
+# rendering + the final I2C transfer in show()) runs with no await in
+# between, blocking the event loop for its whole duration. Measured
+# impact: a redraw every cycle - which used to happen unconditionally,
+# even while nothing on screen was actually changing - periodically
+# starved task_control's servo ramp of its scheduled wake-up, producing a
+# real, physical speed wobble at the servo (most visible with the servo
+# tester, since the 4 hatch status lines never change while it is used).
+# The same unconditional redraw also caused a visible flicker on the QR
+# screen (moire banding when filming it with a phone camera at scanning
+# distance), from repeatedly blanking and rebuilding the same QR code.
+#
+# _last_drawn holds a fingerprint of whatever is currently actually shown
+# on the display (including which of the two screens - status or QR - is
+# active), and both _refresh() and _render_qr() skip their I2C work
+# entirely when the fingerprint they would draw matches it. Because the
+# fingerprint includes the screen mode, switching between status and QR
+# always forces a redraw even if the two screens coincidentally examine
+# unchanged data - it forces a redraw purely because content actually
+# visible on the panel is different from what's on screen right now.
 #
 # Normal display layout (128x64, 4 hatch status lines using a larger
 # 14px-high monospace font via the Writer class - see lib/writer.py and
 # lib/font_hatch_status.py):
 #   Line 0-3: hatch status "<short_name> <status>", 16px pitch each,
-#             filling the full 64px height. No Wi-Fi/IP line and no
-#             config-session hint are shown here anymore - the Wi-Fi
-#             status is only relevant when scanning the QR code (see
-#             below), and the config session state is now shown
-#             immediately and exclusively on the web page itself.
+#             filling the full 64px height.
 #
 # QR-code layout (shown for 15s after a short button press):
 #   Top 48px:    QR code (scale 1px/module, 4px quiet zone)
@@ -33,7 +52,10 @@ except ImportError:
 _qr_cache_url    = None  # URL for which the matrix was generated
 _qr_cache_matrix = None  # cached matrix to avoid regenerating on every refresh
 
-_REFRESH_MS     = 333  # display refresh interval in milliseconds
+_last_drawn = None  # fingerprint of whatever is currently physically shown
+                     # on the display - see module docstring
+
+_REFRESH_MS     = 500  # display refresh interval in milliseconds
 _LINE_HEIGHT_PX = 16   # px per hatch status line; 4 lines exactly fill 64px
 _IP_LINE_PX     = 16   # px reserved at the bottom of the QR screen for the IP text
 
@@ -51,10 +73,10 @@ def _find_pos_idx(hatch_deg, positions):
 def _status_text(idx, state, targets, config, spin_frame=0):
     """Return a fixed 4-character status string for hatch idx.
 
-    "_|__"/"_/__"/"_-__"/"_\\__" (spin_frame 0-3) - target differs from
+    " |  "/" /  "/" -  "/" \\  " (spin_frame 0-3) - target differs from
                 actual (moving or fail-safe recovery in progress);
-                rotates one frame per refresh cycle for a simple
-                "in progress" animation instead of a long static word
+                rotates one frame per redraw for a simple "in progress"
+                animation instead of a long static word
     "?ZU?"    - actual and target are both FAILSAFE_DEG: hatch fell closed
                 by gravity after a fail-safe sequence, position unverified
                 and unlocked
@@ -64,7 +86,7 @@ def _status_text(idx, state, targets, config, spin_frame=0):
     "??? "    - actual position not found in positions list (should not
                 occur in normal operation after fail-safe handling)
     """
-    if targets[idx]["hatch_deg"] != state["hatches"][idx]["hatch_deg"]:
+    if targets["hatches"][idx]["hatch_deg"] != state["hatches"][idx]["hatch_deg"]:
         return " " + _SPIN_FRAMES[spin_frame % len(_SPIN_FRAMES)] + "  "
 
     hatch_deg = state["hatches"][idx]["hatch_deg"]
@@ -100,29 +122,39 @@ def _current_ip():
 
 def _render_qr(display):
     """Render the current Wi-Fi IP as a QR code, with the IP address as
-    plain text underneath.
+    plain text underneath - but only if the display isn't already
+    showing exactly that (see module docstring for why).
 
     White background, black QR modules. The QR code is confined to the
     top 48px so the bottom _IP_LINE_PX px remain free for the IP address
     text. Matrix is cached until the URL changes to avoid regenerating
-    on every 500 ms refresh cycle.
+    on every redraw.
     """
-    global _qr_cache_url, _qr_cache_matrix
-
-    # QR mode always draws its own black-on-white / white-on-black pixels
-    # directly and must not be affected by the config-session inversion
-    # used in the normal status view.
-    display.invert(False)
+    global _qr_cache_url, _qr_cache_matrix, _last_drawn
 
     if not _QR_AVAILABLE:
+        fingerprint = ("qr_unavailable",)
+        if fingerprint == _last_drawn:
+            return
         display.fill(0)
         display.text("uQR not found", 0, 28)
         display.show()
+        _last_drawn = fingerprint
         return
 
-    ip       = _current_ip()
-    url      = "http://" + (ip if ip else "0.0.0.0")
-    ip_text  = ip if ip else "Kein WLAN"
+    ip      = _current_ip()
+    url     = "http://" + (ip if ip else "0.0.0.0")
+    ip_text = ip if ip else "Kein WLAN"
+
+    fingerprint = ("qr", url)
+    if fingerprint == _last_drawn:
+        return
+
+    # QR mode always draws its own black-on-white pixels directly and
+    # must not be affected by the config-session inversion used in the
+    # status view.
+    display.invert(False)
+
     qr_area_height = 64 - _IP_LINE_PX
 
     # Regenerate matrix only when URL changes
@@ -155,45 +187,58 @@ def _render_qr(display):
     display.text(ip_text, text_x, text_y, 0)
 
     display.show()
-
-
-_spin_frame = 0  # module-level counter, advances by one every refresh cycle
+    _last_drawn = fingerprint
 
 
 def _refresh(wri, config, state, targets):
-    """Redraw the entire display: one larger-font status line per hatch.
+    """Redraw the status lines - but only if the display isn't already
+    showing exactly that (see module docstring for why).
 
     Inverted (negative) display indicates that the config session is
     reachable right now - either the 60s unlock window is open or the
     1h session is already active. This is the only on-device indicator
-    of that state; the config button itself only ever appears on the
-    web page.
+    of that state. config_reachable is part of the fingerprint precisely
+    so that a session-state change alone (with the status text otherwise
+    unchanged) still forces a redraw.
 
     Args:
         wri: Writer instance bound to the display and font_hatch_status,
              created once in task_display() and reused on every refresh.
     """
-    global _spin_frame
-    config_reachable = session.is_session_active() or session.is_unlock_active()
-    wri.device.invert(config_reachable)
-    wri.device.fill(0)
+    global _spin_frame, _last_drawn
 
-    for i in range(len(targets)):
+    config_reachable = session.is_session_active() or session.is_unlock_active()
+
+    lines = []
+    for i in range(len(targets["hatches"])):
         short  = config["hatches"][i]["short_name"][:11]
         status = _status_text(i, state, targets, config, _spin_frame)
-        # Status always occupies the last 4 columns of the 16-char line,
-        # preceded by exactly one blank column; the short name gets all
-        # remaining space (11 columns) from the start of the line.
-        line   = f"{short:<11} {status}"
+        lines.append(f"{short:<11} {status}")
+
+    fingerprint = ("status", config_reachable, tuple(lines))
+    if fingerprint == _last_drawn:
+        return
+
+    wri.device.invert(config_reachable)
+    wri.device.fill(0)
+    for i, line in enumerate(lines):
         Writer.set_textpos(wri.device, i * _LINE_HEIGHT_PX, 0)
         wri.printstring(line)
-
-    _spin_frame = (_spin_frame + 1) % len(_SPIN_FRAMES)
     wri.device.show()
+
+    _last_drawn = fingerprint
+    # Only advance the spinner once a redraw actually happened - it is
+    # part of "lines" above, so a moving hatch always produces a fresh
+    # fingerprint and therefore a redraw every cycle, same as before.
+    _spin_frame = (_spin_frame + 1) % len(_SPIN_FRAMES)
+
+
+_spin_frame = 0  # module-level counter, advances by one every redraw
+                 # while at least one hatch is moving
 
 
 async def task_display(hw, config, state, targets):
-    """Periodically refresh the OLED display.
+    """Periodically check whether the OLED needs to be redrawn.
 
     Args:
         hw:      HardwareBundle (hw.display must be initialised)

@@ -10,10 +10,12 @@ Migration rules:
   config.json present and valid → no action (load_config() will succeed).
   config.json present but invalid or with missing/renamed fields → merge:
       For each key in the template, the existing value is kept if present;
-      otherwise the template value is used.  Keys in the existing config
+      otherwise the template value is used. Keys in the existing config
       that are absent from the template are silently dropped – this is
-      how old or renamed parameters (e.g. delay_after_power_on_ms) are
-      removed without manual intervention.
+      how old or renamed parameters (e.g. the flat hatch_min_us/step_us
+      fields from an earlier config.json schema, now replaced by the
+      nested hatch_servo/brake_servo blocks) are removed without manual
+      intervention.
       The merge is applied recursively for nested dicts.
       The hatches list is always processed as exactly four entries; each
       hatch dict is merged individually against its template counterpart.

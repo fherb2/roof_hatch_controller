@@ -42,6 +42,12 @@ class GroveRelay:
     """
 
     def __init__(self, i2c, address=0x11):
+        """Initialise the driver and force all relays off.
+
+        Args:
+            i2c:     initialised machine.I2C bus.
+            address: 7-bit I2C address of the relay board (default 0x11).
+        """
         self._i2c   = i2c
         self._addr  = address
         self._state = 0x00  # bitmask of currently energised channels

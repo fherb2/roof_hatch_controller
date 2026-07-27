@@ -36,6 +36,12 @@ class PCA9685:
     """
 
     def __init__(self, i2c, address=0x40):
+        """Initialise the driver and reset the chip to a known state.
+
+        Args:
+            i2c:     initialised machine.I2C bus.
+            address: 7-bit I2C address of the PCA9685 (default 0x40).
+        """
         self._i2c  = i2c
         self._addr = address
         self._reset()
@@ -102,6 +108,14 @@ class PCA9685:
         """Set servo pulse width in microseconds.
 
         Converts microseconds to 12-bit tick counts based on PWM frequency.
+
+        IMPORTANT: this driver has no way to read back the frequency
+        actually programmed into the chip via freq() - freq_hz here is
+        used purely for the tick-count math and silently defaults to
+        50 Hz if omitted. Passing a freq_hz that does not match the last
+        freq() call produces a wrong pulse width with no error of any
+        kind. Callers driving a chip at a non-default frequency must
+        pass the same freq_hz on every single set_us() call.
 
         Args:
             channel: 0–15

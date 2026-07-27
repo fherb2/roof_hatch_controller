@@ -1,8 +1,11 @@
 # task_button.py - Async task: user button monitor
 #
-# Polls the user button and starts the config unlock window on press.
-# The unlock window allows the web interface to show the config page
-# button for 60 seconds (see app/session.py for session logic).
+# Polls the user button and distinguishes short from long presses:
+#   Short press (< BTN_LONG_PRESS_MS): shows the Wi-Fi QR code on the
+#     OLED for session._QR_DURATION_S seconds (see app/session.py).
+#   Long press (>= BTN_LONG_PRESS_MS): starts the config unlock window,
+#     which lets the web interface show the config page button for
+#     BTN_CONFIG_UNLOCK_MS (see app/session.py for session logic).
 #
 # Button is active low (internal pull-up on Seeed Expansion Board).
 # Detects falling edge (1→0) with software debounce.

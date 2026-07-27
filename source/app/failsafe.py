@@ -30,6 +30,15 @@ def fail_safe_close_all(hw, brake_open_us=None):
 
     Only one hatch is powered at a time to stay within PSU limits.
 
+    Forces the PCA9685 to a known 50 Hz before driving anything: this
+    runs in Stage 0, before config.json is readable, so any per-channel
+    pwm_freq_hz the chip happened to be programmed to (it stays powered
+    and keeps its PRE_SCALE register across an ESP32-only reset) is
+    unknown here. Without this, set_us()'s implicit 50 Hz tick-count
+    assumption (see its docstring) could compute a wrong pulse width
+    for whatever frequency was actually still active - wrong brake
+    position in exactly the most safety-critical code path.
+
     Args:
         hw:            HardwareBundle (pwm + relay must be initialised;
                        display and btn may be None)
@@ -40,13 +49,15 @@ def fail_safe_close_all(hw, brake_open_us=None):
     if brake_open_us is None:
         brake_open_us = BRAKE_OPEN_US_FAILSAFE
 
+    hw.pwm.freq(50)  # force known frequency - see docstring above
+
     for i in range(NUM_HATCHES):
         _, brake_ch = PCA9685_CH[i]
         relay_ch    = RELAY_CH[i]
 
         # Output brake-open position before powering the servo so it
         # moves immediately in the right direction when relay closes.
-        hw.pwm.set_us(brake_ch, brake_open_us)
+        hw.pwm.set_us(brake_ch, brake_open_us, 50)
 
         # Power on – brake servo can now move
         hw.relay.on(relay_ch)

@@ -64,13 +64,17 @@ PWM_FREQ_MAX_HZ = 400
 
 FAILSAFE_DEG = -1    # sentinel: actual or target position unknown (fail-safe state)
 
-MIN_STEP_MS = 15  # practical minimum ramp step interval in ms, for both the
-                    # hatch and the brake servo ramp; must reliably exceed
-                    # the real-world uasyncio scheduling + I2C write overhead
-                    # (multiple concurrent tasks), otherwise the actual speed
-                    # falls far short of the configured speed_deg_per_s. The
-                    # step size in µs is derived from this floor at move time
-                    # (see task_control._compute_step()), not fixed.
+MIN_STEP_MS = 8     # practical minimum interval in ms between PWM update
+                    # writes during a ramp (see task_control._ramp() and
+                    # _tick_interval_ms()); must reliably exceed the
+                    # real-world uasyncio scheduling + I2C write overhead
+                    # (multiple concurrent tasks), otherwise updates queue
+                    # up and the servo receives them irregularly instead of
+                    # smoothly. The actual interval used is
+                    # max(MIN_STEP_MS, PWM period for the configured
+                    # pwm_freq_hz) - this floor is only reached once
+                    # pwm_freq_hz is high enough that its own period drops
+                    # below 8ms (>= 125 Hz).
 
 # PCA9685 channel assignments
 # Each hatch uses two servos: hatch (movement) and brake (locking mechanism)

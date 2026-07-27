@@ -38,6 +38,20 @@ class HardwareBundle:
 
 
 def _check_i2c_device(i2c, address, name):
+    """Verify that a device answers at the given I2C address, raising
+    HardwareInitError with a descriptive message if not.
+
+    Addresses above 0x77 (the standard 7-bit I2C scan range) are outside
+    what i2c.scan() reports, so those are probed directly with a
+    zero-byte write instead of relying on the scan result.
+
+    Args:
+        i2c:     initialised I2C bus.
+        address: 7-bit I2C address to check.
+        name:    human-readable device name, used in the error message.
+    Raises:
+        HardwareInitError: if no device acknowledges at address.
+    """
     if address > 0x77:
         # Addresses 0x78-0x7F are outside the range scanned by i2c.scan()
         # (reserved per I2C spec). Probe directly with a write attempt.

@@ -336,7 +336,8 @@
             <!-- ============================================================
                  Servo tester: next free channel pair, permanently powered
                  ============================================================ -->
-            <div class="accordion-item" x-show="tester.pwm_freq_hz">
+            <template x-if="loaded && tester.pwm_freq_hz">
+            <div class="accordion-item">
                 <h2 class="accordion-header">
                     <button class="accordion-button collapsed" type="button"
                             data-bs-toggle="collapse" data-bs-target="#panelTester">
@@ -468,6 +469,7 @@
                     </div>
                 </div>
             </div>
+            </template>
 
         </div><!-- /accordion -->
     </div><!-- /container -->
@@ -583,22 +585,53 @@
                Persist the full current document to the device.
             ---------------------------------------------------------------- */
             async persistConfig() {
+                // buildConfig() deliberately runs OUTSIDE the network try
+                // block: a JS error here is a client-side bug, not a
+                // network failure, and must not be reported as one.
+                let payload;
                 try {
-                    const r = await fetch('/api/config', {
-                        method:  'POST',
-                        headers: {'Content-Type': 'application/json'},
-                        body:    JSON.stringify(this.buildConfig()),
-                    });
-                    const d = await r.json();
-                    if (d.error) { this.errorMsg = 'Error: ' + d.error; return false; }
-                    this.errorMsg = '';
-                    return true;
-                } catch (_) {
-                    this.errorMsg = 'Network error while saving.';
+                    payload = JSON.stringify(this.buildConfig());
+                } catch (e) {
+                    this.errorMsg = 'Client error in buildConfig(): ' + e;
                     return false;
                 }
+                let r;
+                try {
+                    r = await fetch('/api/config', {
+                        method:  'POST',
+                        headers: {'Content-Type': 'application/json'},
+                        body:    payload,
+                    });
+                } catch (e) {
+                    this.errorMsg = 'Network error while saving: ' + e;
+                    return false;
+                }
+                // Try to parse as JSON regardless of status first: our own
+                // post_config() always returns valid JSON with an "error"
+                // field for a rejected value (HTTP 400) - that is a normal
+                // input mistake, not a server malfunction, and should read
+                // like one. Only a body that fails to parse as JSON at all
+                // indicates a genuine server-side failure (crash/garbled
+                // response).
+                const raw = await r.text();
+                let d;
+                try {
+                    d = JSON.parse(raw);
+                } catch (e) {
+                    this.errorMsg = 'Server error ' + r.status + ': ' + raw.slice(0, 200);
+                    return false;
+                }
+                if (d.error) { this.errorMsg = d.error; return false; }
+                this.errorMsg = '';
+                return true;
             },
 
+            /* ----------------------------------------------------------------
+               Accept/reset a single field's draft value. accept* validates
+               locally, optimistically commits, persists, and rolls the
+               commit back if persistConfig() reports a rejection - draft
+               is left untouched so the user can see and fix what they typed.
+            ---------------------------------------------------------------- */
             async acceptNum(f, min, max) {
                 const v = Number(f.draft);
                 if (!Number.isFinite(v) || v < min || v > max) return;
@@ -634,6 +667,11 @@
                 f.draft = '' + f.committed;
             },
 
+            /* ----------------------------------------------------------------
+               Position list: positions[0] is always ZU, positions[-1] is
+               always AUF and neither ever moves - addPos()/removePos() only
+               ever insert/remove the intermediate entry closest to AUF.
+            ---------------------------------------------------------------- */
             posLabel(idx, total) {
                 if (idx === 0)          return 'ZU';
                 if (idx === total - 1)  return 'AUF';

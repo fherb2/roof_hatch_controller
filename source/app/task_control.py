@@ -26,6 +26,29 @@ overwritten by a concurrent hatch move: the tester is meant only for
 servos removed from the hatches, so incorrect behaviour while a hatch
 happens to move at the same time is accepted as harmless.
 
+IMPORTANT: shared/pca9685.py's set_us() converts microseconds to a 12-bit
+tick count using a freq_hz argument (default 50) - it has no way to read
+back the frequency actually programmed into the chip via freq(). Every
+set_us() call in this module MUST therefore be given the same freq_hz
+that was just passed to _ensure_pwm_freq() for that same move, or the
+tick-count math silently assumes 50 Hz regardless of the real PRE_SCALE
+value, producing a wrong pulse width (and therefore a wrong angle)
+whenever a channel's configured pwm_freq_hz differs from 50.
+
+RAMPING IS TIME-BASED, NOT STEP-COUNT-BASED (see _ramp()): the commanded
+position at each tick is computed from actually elapsed wall-clock time,
+not from a running step counter. This matters because task_display (OLED
+refresh, every 333 ms) and task_webserver share the same I2C bus and
+event loop with this task; a step-count-based ramp that just adds a
+fixed increment every "step_ms via sleep_ms()" has no way to compensate
+when a tick is delayed by another task - the delayed step is simply
+skipped, which is perceived as the servo periodically slowing down and
+speeding back up while driving to its target, even though the configured
+speed and hardware are both fine. Time-based ramping self-corrects: a
+late tick just computes a larger jump to stay on the correct time/
+position curve, so the resulting *average* speed matches the configured
+speed_deg_per_s regardless of individual tick jitter.
+
 Movement sequence executed by _move_hatch:
   step_mark_failsafe:     Set hatch_deg to FAILSAFE_DEG and persist so
                           that a power loss mid-move leaves a detectable
@@ -41,24 +64,22 @@ Movement sequence executed by _move_hatch:
                           ramping towards open_deg once the hatch servo
                           has taken up the holding load (see below).
   step_set_pwm_freq:      Reprogram the PCA9685 to this hatch's own
-                          pwm_freq_hz if not already active.
+                          pwm_freq_hz if not already active. Happens
+                          BEFORE any set_us() call for this move, since
+                          set_us()'s tick-count math depends on it and
+                          freq() itself briefly resets the chip.
   step_relay_on:          Relay on -> both servos of this hatch powered.
-  step_wiggle:            Alternate hatch servo +/- _WIGGLE_US around the
-                          preset position for _WIGGLE_CYCLES full +/-
-                          cycles at ~50 Hz (2 x 20 ms per cycle).
-                          Breaks power-on centre-seeking on some digital
-                          servos. Disabled when _WIGGLE_CYCLES = 0. Only
-                          the hatch servo is wiggled - the brake servo
-                          is holding a fixed position at this point.
   (wait _RELAY_ON_TO_TORQUE_MS): time for the hatch servo to take up the
                           holding load, counted from relay-on, before the
-                          brake is allowed to release.
+                          brake is allowed to release. No wiggle step
+                          needed anymore - the smoothstep ramp profile
+                          (see _ramp()) starts every move at zero speed.
   step_ramp_brake_open:   Brake servo ramps from its actual position to
-                          open_deg (its own speed_deg_per_s/step size).
-                          No pause afterwards - the hatch move starts the
-                          instant this ramp finishes.
+                          open_deg (its own speed_deg_per_s). No pause
+                          afterwards - the hatch move starts the instant
+                          this ramp finishes.
   step_ramp_hatch:        Hatch servo ramps to the target angle (its own
-                          speed_deg_per_s/step size), clamped to
+                          speed_deg_per_s), clamped to
                           [hard_stop_min_deg, hard_stop_max_deg].
   (wait _HATCH_SETTLE_TO_BRAKE_CLOSE_MS): time for the hatch to settle
                           at its final position before the brake starts
@@ -72,12 +93,6 @@ Movement sequence executed by _move_hatch:
   step_update_state:      Update hatch_deg, brake_deg and target_deg in
                           state and persist to flash.
 
-Because the brake servo now ramps (rather than jumping in one step) we
-know exactly when it has physically finished moving, which is what let
-us replace the two previous fixed "just wait and hope" delays
-(_BRAKE_OPEN_TO_HATCH_MOVE_MS, _BRAKE_CLOSE_TO_RELAY_OFF_MS) with the
-ramp's own natural completion.
-
 _move_brake_only() and _move_tester_servo() are simplified variants used
 for the per-servo "mounting angle" maintenance moves and the servo
 tester - see their own docstrings below.
@@ -86,18 +101,12 @@ The hardware WDT (task_watchdog) acts as the last safety net for cases
 where the event loop itself stops responding.
 """
 
+import time
 import uasyncio
 from app.hw_config import PCA9685_CH, RELAY_CH, TESTER_CH, FAILSAFE_DEG, MIN_STEP_MS
 from app.state import save_state
 from shared.servo_units import deg_to_us
 
-# Wiggle parameters: after relay-on, the hatch servo alternates between
-# preset_us +/- _WIGGLE_US for _WIGGLE_CYCLES full oscillations at ~50 Hz
-# (each cycle is one +/- pair = 2 x 20 ms). Intended to interrupt the
-# power-on centre-seeking routine of some digital servos.
-# Set _WIGGLE_CYCLES = 0 to disable entirely.
-_WIGGLE_US       = 10   # amplitude in µs
-_WIGGLE_CYCLES   = 5    # full +/- cycles; 0 = disabled
 _PRESET_DELAY_MS = 250  # wait after relay-on before first PWM signal;
                          # gives servo controller time to boot without
                          # seeing a valid signal -> may prevent power-on
@@ -111,6 +120,11 @@ _HATCH_SETTLE_TO_BRAKE_CLOSE_MS = 200  # target reached -> brake closes
 _current_pwm_freq = None  # module cache of the PCA9685's last-programmed
                            # frequency, to skip redundant reprogramming
 
+_MAX_MOVE_RETRIES = 3     # consecutive failures before a hatch's target is
+                           # cleared, to stop an endless retry loop (see
+                           # task_control() below)
+_fail_count = [0, 0, 0, 0]
+
 
 def _ensure_pwm_freq(hw, freq_hz):
     """Reprogram the PCA9685's chip-wide frequency if it isn't already
@@ -122,51 +136,90 @@ def _ensure_pwm_freq(hw, freq_hz):
         _current_pwm_freq = freq_hz
 
 
-def _compute_step(servo_cfg):
-    """Derive (step_us, step_ms) for a movement ramp from a servo's
-    configured speed.
+def _ramp_duration_ms(distance_deg, speed_deg_per_s):
+    """Total wall-clock duration for a ramp covering distance_deg at the
+    configured angular speed. Used by the time-based _ramp() below.
 
-    Used for the hatch servo, the brake servo and the two servo tester
-    outputs alike - any dict with range_deg/pulse_min_us/pulse_max_us/
-    speed_deg_per_s works. Rather than fixing the step size and deriving
-    whatever (possibly far too small) interval that implies, this fixes
-    a practical minimum step interval (MIN_STEP_MS) that reliably
-    exceeds real-world uasyncio scheduling and I2C write overhead -
-    alongside the other concurrent tasks (webserver, watchdog, button
-    poll) - and derives the step size in microseconds needed to hit the
-    configured angular speed at that interval.
+    _ramp() follows a smoothstep (S-curve) profile rather than constant
+    velocity, so that the motion starts and ends at exactly zero speed
+    at both ends - no jerk (discontinuous acceleration) at start or
+    stop, which is kinder to the servo gearing than the abrupt full-speed
+    start/stop of a linear ramp. A smoothstep profile's peak velocity
+    (reached at the midpoint) is 1.5x its average velocity for the same
+    distance and duration; multiplying the naive constant-velocity
+    duration by 1.5 here compensates for that geometry, so the
+    configured speed_deg_per_s ends up as the actual peak speed - never
+    exceeded - instead of just the average.
 
     Args:
-        servo_cfg: a hatch_servo or brake_servo config dict.
+        distance_deg:    signed or unsigned angular distance to cover;
+                          only the magnitude matters.
+        speed_deg_per_s: configured speed, must be > 0 (validated by
+                          state.validate_config()) - this is the PEAK
+                          speed reached at the midpoint of the move, not
+                          the average.
     Returns:
-        (step_us, step_ms) tuple, both at least 1.
+        float duration in milliseconds, >= 0.
     """
-    us_per_deg = ((servo_cfg["pulse_max_us"] - servo_cfg["pulse_min_us"])
-                  / servo_cfg["range_deg"])
-    step_ms = MIN_STEP_MS
-    step_us = max(1, round(us_per_deg * servo_cfg["speed_deg_per_s"]
-                            * step_ms / 1000))
-    return step_us, step_ms
+    return 1.5 * abs(distance_deg) / speed_deg_per_s * 1000
 
 
-async def _ramp(hw, channel, current_us, target_us, step_us, step_ms):
-    """Ramp a single PCA9685 channel from current_us to target_us.
+def _tick_interval_ms(freq_hz):
+    """Interval between PWM update writes during a ramp: never faster
+    than the PCA9685's own refresh period (1000/freq_hz ms) - writing
+    faster than the chip refreshes wastes I2C bandwidth for no visible
+    benefit - and never faster than MIN_STEP_MS, which keeps the I2C bus
+    load bounded at high configured frequencies."""
+    return max(MIN_STEP_MS, round(1000 / freq_hz))
 
-    Shared by the hatch servo, the brake servo, and the servo tester -
-    previously the brake servo jumped straight to its target in one
-    step; it now ramps identically to the hatch servo.
 
+async def _ramp(hw, channel, start_us, target_us, duration_ms, freq_hz):
+    """Ramp a single PCA9685 channel from start_us to target_us over
+    duration_ms of wall-clock time.
+
+    Time-based rather than step-count-based - see the module docstring's
+    "RAMPING IS TIME-BASED" section for why: a tick delayed by scheduling
+    jitter (task_display/task_webserver sharing the I2C bus and event
+    loop) is caught up on the very next tick instead of silently
+    producing a slower average speed for that stretch of the ramp.
+
+    Args:
+        hw:          HardwareBundle.
+        channel:     PCA9685 channel to drive.
+        start_us:    pulse width to start from.
+        target_us:   pulse width to end at.
+        duration_ms: total time the ramp should take, as computed by
+                     _ramp_duration_ms(). A duration <= 0 (or start
+                     already equal to target) jumps straight to target.
+        freq_hz:     the frequency currently programmed into the chip
+                     for this move (see the module docstring's IMPORTANT
+                     note) - set_us() cannot read it back itself.
     Returns:
         int the final pulse width written (== target_us).
     """
-    while current_us != target_us:
-        if current_us < target_us:
-            current_us = min(current_us + step_us, target_us)
-        else:
-            current_us = max(current_us - step_us, target_us)
-        hw.pwm.set_us(channel, current_us)
-        await uasyncio.sleep_ms(step_ms)
-    return current_us
+    if duration_ms <= 0 or start_us == target_us:
+        hw.pwm.set_us(channel, target_us, freq_hz)
+        return target_us
+
+    tick_ms    = _tick_interval_ms(freq_hz)
+    start_tick = time.ticks_ms()
+    distance   = target_us - start_us
+
+    while True:
+        elapsed = time.ticks_diff(time.ticks_ms(), start_tick)
+        if elapsed >= duration_ms:
+            hw.pwm.set_us(channel, target_us, freq_hz)
+            return target_us
+        # Smoothstep easing (3f^2 - 2f^3): both the position curve and its
+        # first derivative (velocity) are continuous and zero at f=0/f=1,
+        # so the motion starts and ends with zero speed - no jerk at
+        # either end. Peak velocity at f=0.5 is compensated for in
+        # _ramp_duration_ms() (1.5x factor) so it matches speed_deg_per_s.
+        frac  = elapsed / duration_ms
+        eased = frac * frac * (3 - 2 * frac)
+        current_us = round(start_us + distance * eased)
+        hw.pwm.set_us(channel, current_us, freq_hz)
+        await uasyncio.sleep_ms(tick_ms)
 
 
 async def _move_hatch(idx, hw, config, state, targets):
@@ -204,6 +257,7 @@ async def _move_hatch(idx, hw, config, state, targets):
     s  = state["hatches"][idx]
     hatch_ch, brake_ch = PCA9685_CH[idx]
     relay_ch            = RELAY_CH[idx]
+    freq_hz              = h["pwm_freq_hz"]
 
     # Clamp target to this hatch's own hardstop range (targets may be
     # set from web/button before config is fully validated for this hatch)
@@ -213,6 +267,7 @@ async def _move_hatch(idx, hw, config, state, targets):
 
     # Capture actual position before overwriting it with FAILSAFE_DEG
     actual_deg = s["hatch_deg"]
+    actual_brake_deg = s["brake_deg"]
 
     # -- Step 0: mark actual as unknown and persist -----------------------
     # Any power loss after this point leaves FAILSAFE_DEG in state.json,
@@ -227,24 +282,28 @@ async def _move_hatch(idx, hw, config, state, targets):
                                  hs["range_deg"], hs["direction"])
     target_us       = deg_to_us(target_deg, hs["pulse_min_us"], hs["pulse_max_us"],
                                  hs["range_deg"], hs["direction"])
-    brake_preset_us = deg_to_us(s["brake_deg"], bs["pulse_min_us"], bs["pulse_max_us"],
+    brake_preset_us = deg_to_us(actual_brake_deg, bs["pulse_min_us"], bs["pulse_max_us"],
                                  bs["range_deg"], bs["direction"])
     brake_open_us   = deg_to_us(bs["open_deg"], bs["pulse_min_us"], bs["pulse_max_us"],
                                  bs["range_deg"], bs["direction"])
     brake_close_us  = deg_to_us(bs["close_deg"], bs["pulse_min_us"], bs["pulse_max_us"],
                                  bs["range_deg"], bs["direction"])
-    hatch_step_us, hatch_step_ms = _compute_step(hs)
-    brake_step_us, brake_step_ms = _compute_step(bs)
+
+    hatch_duration_ms       = _ramp_duration_ms(target_deg - preset_deg, hs["speed_deg_per_s"])
+    brake_open_duration_ms  = _ramp_duration_ms(bs["open_deg"] - actual_brake_deg, bs["speed_deg_per_s"])
+    brake_close_duration_ms = _ramp_duration_ms(bs["close_deg"] - bs["open_deg"], bs["speed_deg_per_s"])
 
     # -- step_preset_servos: brake to its own actual position (not -------
     #    open_deg - avoids a jerk on relay-on); hatch to 0 (no signal)
     #    so the servo controller does not see a valid pulse during its
     #    power-on boot sequence
-    hw.pwm.set_us(hatch_ch, 0)
-    hw.pwm.set_us(brake_ch, brake_preset_us)
+    # -- step_set_pwm_freq: MUST happen before any set_us() for this move,
+    #    because set_us() computes tick counts for freq_hz and freq()
+    #    restarts the chip (which would disturb outputs written earlier)
+    _ensure_pwm_freq(hw, freq_hz)
 
-    # -- step_set_pwm_freq -------------------------------------------------
-    _ensure_pwm_freq(hw, h["pwm_freq_hz"])
+    hw.pwm.set_us(hatch_ch, 0, freq_hz)
+    hw.pwm.set_us(brake_ch, brake_preset_us, freq_hz)
 
     # -- step_relay_on: both servos of this hatch now powered -------------
     hw.relay.on(relay_ch)
@@ -255,30 +314,21 @@ async def _move_hatch(idx, hw, config, state, targets):
         if _PRESET_DELAY_MS > 0:
             await uasyncio.sleep_ms(_PRESET_DELAY_MS)
 
-        # -- step_wiggle: set first pulse and immediately alternate -------
-        #    +/- _WIGGLE_US to break any residual centre-seeking
-        #    (hatch servo only - brake servo is holding still)
-        _period_ms = 20  # 50 Hz base period
-        hw.pwm.set_us(hatch_ch, preset_us)
-        for _ in range(_WIGGLE_CYCLES):
-            hw.pwm.set_us(hatch_ch, preset_us + _WIGGLE_US)
-            await uasyncio.sleep_ms(_period_ms)
-            hw.pwm.set_us(hatch_ch, preset_us - _WIGGLE_US)
-            await uasyncio.sleep_ms(_period_ms)
-        if _WIGGLE_CYCLES > 0:
-            hw.pwm.set_us(hatch_ch, preset_us)
-
         # -- wait for the hatch servo to take up the holding torque -------
-        #    before the brake is allowed to release
+        #    before the brake is allowed to release. The preset pulse
+        #    from step_preset_servos is already applied at this point;
+        #    no wiggle needed - _ramp()'s smoothstep profile starts every
+        #    move at zero speed, so there is no abrupt jump to catch up
+        #    from in the first place.
         await uasyncio.sleep_ms(_RELAY_ON_TO_TORQUE_MS)
 
         # -- step_ramp_brake_open: brake ramps to open, no pause after ----
         await _ramp(hw, brake_ch, brake_preset_us, brake_open_us,
-                    brake_step_us, brake_step_ms)
+                    brake_open_duration_ms, freq_hz)
 
         # -- step_ramp_hatch: hatch ramps to target position --------------
         await _ramp(hw, hatch_ch, preset_us, target_us,
-                    hatch_step_us, hatch_step_ms)
+                    hatch_duration_ms, freq_hz)
 
         # -- wait for the hatch to settle at its final position before ----
         #    commanding the brake to close
@@ -286,7 +336,7 @@ async def _move_hatch(idx, hw, config, state, targets):
 
         # -- step_ramp_brake_close: brake ramps to close -------------------
         await _ramp(hw, brake_ch, brake_open_us, brake_close_us,
-                    brake_step_us, brake_step_ms)
+                    brake_close_duration_ms, freq_hz)
 
         # -- step_update_state: confirm reached position and persist ------
         s["hatch_deg"]  = target_deg
@@ -326,34 +376,37 @@ async def _move_brake_only(idx, hw, config, state, target_deg):
     s  = state["hatches"][idx]
     hatch_ch, brake_ch = PCA9685_CH[idx]
     relay_ch            = RELAY_CH[idx]
+    freq_hz              = h["pwm_freq_hz"]
 
     target_deg = max(bs["hard_stop_min_deg"], min(bs["hard_stop_max_deg"], target_deg))
+    actual_brake_deg = s["brake_deg"]
 
     hatch_hold_deg = (h["positions"][0]["hatch_deg"]
                       if s["hatch_deg"] == FAILSAFE_DEG else s["hatch_deg"])
     hatch_hold_us   = deg_to_us(hatch_hold_deg, hs["pulse_min_us"], hs["pulse_max_us"],
                                  hs["range_deg"], hs["direction"])
-    brake_preset_us = deg_to_us(s["brake_deg"], bs["pulse_min_us"], bs["pulse_max_us"],
+    brake_preset_us = deg_to_us(actual_brake_deg, bs["pulse_min_us"], bs["pulse_max_us"],
                                  bs["range_deg"], bs["direction"])
     brake_target_us = deg_to_us(target_deg, bs["pulse_min_us"], bs["pulse_max_us"],
                                  bs["range_deg"], bs["direction"])
-    brake_step_us, brake_step_ms = _compute_step(bs)
+    brake_duration_ms = _ramp_duration_ms(target_deg - actual_brake_deg, bs["speed_deg_per_s"])
 
-    hw.pwm.set_us(hatch_ch, 0)
-    hw.pwm.set_us(brake_ch, brake_preset_us)
-    _ensure_pwm_freq(hw, h["pwm_freq_hz"])
+    _ensure_pwm_freq(hw, freq_hz)
+    hw.pwm.set_us(hatch_ch, 0, freq_hz)
+    hw.pwm.set_us(brake_ch, brake_preset_us, freq_hz)
     hw.relay.on(relay_ch)
 
     try:
         if _PRESET_DELAY_MS > 0:
             await uasyncio.sleep_ms(_PRESET_DELAY_MS)
 
-        # Hold the hatch servo steady at its current position - no
-        # wiggle, since it is not the servo being moved here.
-        hw.pwm.set_us(hatch_ch, hatch_hold_us)
+        # Hold the hatch servo steady at its current position - it is
+        # not the servo being moved here, only kept powered so the
+        # shared relay can stay on for the brake move below.
+        hw.pwm.set_us(hatch_ch, hatch_hold_us, freq_hz)
 
         await _ramp(hw, brake_ch, brake_preset_us, brake_target_us,
-                    brake_step_us, brake_step_ms)
+                    brake_duration_ms, freq_hz)
 
         s["brake_deg"] = target_deg
         save_state(state)
@@ -377,9 +430,10 @@ async def _move_tester_servo(hw, config, state, which, target_deg):
         target_deg: requested angle in degrees, clamped here to this
                     tester servo's own hard stops.
     """
-    st       = config["global"]["servo_tester"]
+    st        = config["global"]["servo_tester"]
     servo_cfg = st[f"{which}_servo"]
     channel   = TESTER_CH[0 if which == "hatch" else 1]
+    freq_hz   = st["pwm_freq_hz"]
 
     target_deg = max(servo_cfg["hard_stop_min_deg"],
                       min(servo_cfg["hard_stop_max_deg"], target_deg))
@@ -389,10 +443,10 @@ async def _move_tester_servo(hw, config, state, which, target_deg):
                              servo_cfg["range_deg"], servo_cfg["direction"])
     target_us   = deg_to_us(target_deg, servo_cfg["pulse_min_us"], servo_cfg["pulse_max_us"],
                              servo_cfg["range_deg"], servo_cfg["direction"])
-    step_us, step_ms = _compute_step(servo_cfg)
+    duration_ms = _ramp_duration_ms(target_deg - current_deg, servo_cfg["speed_deg_per_s"])
 
-    _ensure_pwm_freq(hw, st["pwm_freq_hz"])
-    await _ramp(hw, channel, current_us, target_us, step_us, step_ms)
+    _ensure_pwm_freq(hw, freq_hz)
+    await _ramp(hw, channel, current_us, target_us, duration_ms, freq_hz)
 
     state["servo_tester"][f"{which}_deg"] = target_deg
     save_state(state)
@@ -414,6 +468,12 @@ async def task_control(hw, config, state, targets):
     does not prevent the others from being serviced. By the time the
     exception reaches this level the relay (if any) is already off (see
     the finally blocks in _move_hatch/_move_brake_only).
+
+    A hatch whose move keeps failing has its target cleared after
+    _MAX_MOVE_RETRIES consecutive failures (see _fail_count) rather than
+    being retried forever - an endless retry loop would otherwise write
+    state.json to flash on every single pass (step_mark_failsafe runs
+    again each retry), starving the network stack and wearing the flash.
 
     Truly unexpected errors that propagate past this handler will bring
     down the event loop, allowing the hardware WDT to trigger a reset
@@ -445,10 +505,15 @@ async def task_control(hw, config, state, targets):
             if targets["hatches"][i]["hatch_deg"] != state["hatches"][i]["hatch_deg"]:
                 try:
                     await _move_hatch(i, hw, config, state, targets)
+                    _fail_count[i] = 0
                 except Exception as e:
-                    print(f"task_control: move hatch {i} failed: {e}")
-                    # relay is already off via _move_hatch finally block;
-                    # leave state unchanged and continue with next hatch
+                    _fail_count[i] += 1
+                    print(f"task_control: move hatch {i} failed "
+                          f"({_fail_count[i]}/{_MAX_MOVE_RETRIES}): {e}")
+                    if _fail_count[i] >= _MAX_MOVE_RETRIES:
+                        targets["hatches"][i]["hatch_deg"] = state["hatches"][i]["hatch_deg"]
+                        _fail_count[i] = 0
+                        print(f"task_control: hatch {i} giving up, target cleared")
                 moved = True
 
         for i in range(len(targets["brake_only"])):

@@ -19,15 +19,16 @@
 #   POST /api/wifi                → save Wi-Fi credentials, then restart
 #   GET  /api/wifi/scan           → scan available SSIDs, return JSON list
 
+import gc
 import uasyncio
 import ujson
+import uos
 import network
 from microdot import Microdot, Response, send_file
 
 from app import session
 from app.hw_config import NUM_HATCHES, FAILSAFE_DEG
 from app.state import validate_config, ConfigError, save_state
-from shared.json_utils import pretty_json
 from app.wifi import save_wifi_config, WifiConfigError
 
 app = Microdot()
@@ -112,6 +113,7 @@ def _build_status():
 
 @app.route('/static/<path:path>')
 async def static_files(request, path):
+    """Serve a static asset (CSS/JS fallback files) from /webpages/static/."""
     return send_file(f'/webpages/static/{path}')
 
 
@@ -121,6 +123,8 @@ async def static_files(request, path):
 
 @app.route('/')
 async def index(request):
+    """Serve the main control page, or redirect to /ap if config.json
+    failed to load (nothing meaningful to control yet)."""
     if not _config or "hatches" not in _config:
         return Response(status_code=302, headers={'Location': '/ap'})
     return send_file('/webpages/index.html')
@@ -137,6 +141,8 @@ async def config_page(request):
 
 @app.route('/ap')
 async def ap_page(request):
+    """Serve the Wi-Fi setup page (used both in AP mode and as a manual
+    fallback if reachable in client mode)."""
     return send_file('/webpages/ap_setup.html')
 
 
@@ -344,12 +350,23 @@ async def post_config(request):
     except ConfigError as e:
         return _json({'error': str(e)}, 400)
 
+    # Write to a temporary file first, then rename: os.rename() is atomic
+    # on the ESP32 filesystem, so an interrupted write (memory error,
+    # reset, power loss) can never leave a truncated /config.json behind -
+    # which would make the device fail to boot on the next start.
     try:
-        with open('/config.json', 'w') as f:
-            f.write(pretty_json(new_cfg))
+        with open('/config.json.tmp', 'w') as f:
+            f.write(ujson.dumps(new_cfg))
             f.write('\n')
+        try:
+            uos.remove('/config.json')
+        except OSError:
+            pass  # first write, or already gone - nothing to replace
+        uos.rename('/config.json.tmp', '/config.json')
     except OSError as e:
         return _json({'error': f'write failed: {e}'}, 500)
+    except MemoryError:
+        return _json({'error': 'out of memory while writing config'}, 500)
 
     # Update in place so task_control and task_display see the change
     # immediately without needing a reference swap. Each hatch_servo/
@@ -358,6 +375,10 @@ async def post_config(request):
     _config["global"]["servo_tester"].update(new_cfg["global"]["servo_tester"])
     for i, h in enumerate(new_cfg["hatches"]):
         _config["hatches"][i].update(h)
+
+    del new_cfg  # drop the reference to the just-parsed copy before
+                 # collecting, so gc can actually reclaim it
+    gc.collect()
 
     return _json({'ok': True})
 
